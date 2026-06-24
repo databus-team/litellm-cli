@@ -129,14 +129,8 @@ func (c *Client) GetTeamDailyActivity(startDate, endDate string) (*TeamDailyActi
 	return &result, err
 }
 
-// SpendLogsResponse represents /spend/logs response
-type SpendLogsResponse []struct {
-	Key     string                   `json:"51889b664c55b674542ddda7c3cb2d63a1b35f6a75e1664be7d2d4b3f2d841e0"`
-	Models  map[string]float64       `json:"models"`
-	Spend   float64                  `json:"spend"`
-	StartTime string                `json:"startTime"`
-	Users   map[string]float64      `json:"users"`
-}
+// SpendLogsResponse represents /spend/logs response - 使用 map 处理动态 key
+type SpendLogsResponse []map[string]interface{}
 
 // GetSpendLogs 获取消费日志
 func (c *Client) GetSpendLogs(startDate, endDate string) (*SpendLogsResponse, error) {
