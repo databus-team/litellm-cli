@@ -40,3 +40,7 @@ func (c *Client) GetKeyInfo(apiKey string) (*api.KeyInfoResponse, error) {
 func (c *Client) GetAPIKey() string {
 	return c.config.APIKey
 }
+
+func (c *Client) GetTeamAvailable() (*api.TeamAvailableResponse, error) {
+	return c.api.GetTeamAvailable()
+}
