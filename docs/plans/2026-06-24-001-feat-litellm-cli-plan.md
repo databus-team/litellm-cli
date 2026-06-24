@@ -1,7 +1,7 @@
 ---
 name: litellm-cli-plan
 description: LiteLLM CLI 工具实现计划
-status: active
+status: completed
 date: 2026-06-24
 origin: docs/brainstorms/litellm-cli-requirements.md
 ---
