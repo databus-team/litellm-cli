@@ -100,6 +100,8 @@ func printLogs(c *client.Client, model string, tick int) {
 
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
 
 	fmt.Println(headerStyle.Render(fmt.Sprintf(" 📊 LiteLLM 日志 (刷新: %ds) | Ctrl+C 退出 ", interval)))
 	fmt.Println()
@@ -107,12 +109,56 @@ func printLogs(c *client.Client, model string, tick int) {
 	if resp == nil || len(*resp) == 0 {
 		fmt.Println(contentStyle.Render("暂无数据"))
 	} else {
-		fmt.Println(contentStyle.Render(fmt.Sprintf("✅ 获取到 %d 条日志记录", len(*resp))))
+		// 显示每个 key 的汇总
+		for _, entry := range *resp {
+			// 获取 spend
+			spendVal, hasSpend := entry["spend"]
+			if hasSpend {
+				spend, _ := spendVal.(float64)
+
+				keyLabel := "当前 Key"
+				if len(entry) > 0 {
+					for k := range entry {
+						if k != "spend" && k != "models" && k != "users" && k != "startTime" {
+							keyLabel = k
+							break
+						}
+					}
+				}
+				if len(keyLabel) > 12 {
+					keyLabel = keyLabel[:8] + "..."
+				}
+
+				fmt.Printf(contentStyle.Render("📦 %s "), keyLabel)
+				if spend > 0 {
+					fmt.Printf("%s", greenStyle.Render(fmt.Sprintf("$%.4f ", spend)))
+				}
+				fmt.Println()
+			}
+		}
+
+		// 显示所有模型汇总
+		fmt.Println()
+		fmt.Println(contentStyle.Render("📈 按模型:"))
+		for _, entry := range *resp {
+			models, ok := entry["models"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			for m, mValue := range models {
+				if mFloat, ok := mValue.(float64); ok {
+					fmt.Printf("   • %s: %s\n", m, greenStyle.Render(fmt.Sprintf("$%.4f", mFloat)))
+				}
+			}
+		}
+
+		fmt.Println()
+		fmt.Println(mutedStyle.Render(fmt.Sprintf("共 %d 条记录", len(*resp))))
 	}
 
 	fmt.Println()
 	fmt.Printf("⏱ 更新次数: %d | 时间: %s\n", tick, time.Now().Format("15:04:05"))
-	fmt.Println("\n提示: 使用 --text 或 -t 参数可在非交互环境运行")
+	fmt.Println(mutedStyle.Render("\n提示: 使用 --text 或 -t 参数可在非交互环境运行"))
 }
 
 // TUI 模式
