@@ -1,9 +1,7 @@
 package api
 
-// TeamAvailableResponse represents /team/available response
-type TeamAvailableResponse struct {
-	Teams []TeamInfo `json:"teams"`
-}
+// TeamAvailableResponse represents /team/available response (can be array)
+type TeamAvailableResponse []TeamInfo
 
 type TeamInfo struct {
 	TeamID    string `json:"team_id"`
