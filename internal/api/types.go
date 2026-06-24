@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/go-resty/resty/v2"
@@ -186,8 +185,4 @@ func (c *Client) GetKeyInfo(apiKey string) (*KeyInfoResponse, error) {
 	var result KeyInfoResponse
 	err := c.Get("/key/info?api_key="+apiKey, &result)
 	return &result, err
-}
-
-func ReadBody(resp *resty.Response) ([]byte, error) {
-	return io.ReadAll(resp.RawResponse.Body)
 }
