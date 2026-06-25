@@ -709,19 +709,23 @@ func renderLogsTableOld(resp *api.SpendLogsResponse, intervalVal int, newLogIDs 
 
 // TUI 模式
 type logsModel struct {
-	client      *client.Client
-	data        string
-	interval    int
-	model       string
-	tick        int
-	quitting    bool
-	logData     *api.SpendLogsUIResponse
-	logDataOld  *api.SpendLogsResponse
-	seenLogIDs  map[string]bool // 已看到的日志ID
-	newLogIDs   map[string]bool // 本次新增的日志ID（用于高亮）
-	initialized bool            // 是否已完成首次加载
-	width      int             // 窗口宽度
-	height     int             // 窗口高度
+	client        *client.Client
+	data          string
+	interval      int
+	model         string
+	tick          int
+	quitting      bool
+	logData       *api.SpendLogsUIResponse
+	logDataOld    *api.SpendLogsResponse
+	seenLogIDs    map[string]bool // 已看到的日志ID
+	newLogIDs     map[string]bool // 本次新增的日志ID（用于高亮）
+	initialized   bool            // 是否已完成首次加载
+	width         int             // 窗口宽度
+	height        int             // 窗口高度
+	selectedIndex int            // 当前选中的日志索引
+	viewMode      string          // "list" 或 "detail"
+	detailData    map[string]interface{}
+	detailError   string
 }
 
 func NewLogsModel(c *client.Client, interval int, model string) *logsModel {
@@ -747,9 +751,41 @@ func (m *logsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c", "esc":
+		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+		case "esc":
+			// 返回列表视图
+			if m.viewMode == "detail" {
+				m.viewMode = "list"
+				m.detailData = nil
+				m.detailError = ""
+			}
+			return m, nil
+		case "enter":
+			// 查看详情
+			if m.viewMode == "list" {
+				m.loadDetail()
+			}
+			return m, nil
+		case "up", "k":
+			// 上移选择
+			if m.viewMode == "list" && m.selectedIndex > 0 {
+				m.selectedIndex--
+			}
+			return m, nil
+		case "down", "j":
+			// 下移选择
+			maxIdx := 0
+			if m.logData != nil {
+				maxIdx = len(m.logData.Data) - 1
+			} else if m.logDataOld != nil {
+				maxIdx = len(*m.logDataOld) - 1
+			}
+			if m.viewMode == "list" && m.selectedIndex < maxIdx {
+				m.selectedIndex++
+			}
+			return m, nil
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -769,6 +805,149 @@ func (m *logsModel) View() string {
 		return "👋 已退出\n"
 	}
 
+	// 详情视图
+	if m.viewMode == "detail" {
+		return m.renderDetailView()
+	}
+
+	// 列表视图
+	return m.renderListView()
+}
+
+func (m *logsModel) renderDetailView() string {
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("86")).
+		Background(lipgloss.Color("236"))
+
+	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).MarginRight(1)
+
+	var sb strings.Builder
+
+	sb.WriteString(headerStyle.Render(" 📋 日志详情 | 按 ESC 返回 | Enter 刷新 ") + "\n\n")
+
+	if m.detailError != "" {
+		sb.WriteString(contentStyle.Render(m.detailError))
+		if m.detailError == "加载中..." {
+			sb.WriteString(mutedStyle.Render(" ⏳"))
+		}
+		sb.WriteString("\n")
+	}
+
+	if m.detailData != nil {
+		// 显示关键信息
+		infoPairs := []struct {
+			key   string
+			value string
+		}{
+			{"Request ID", ""},
+			{"Model", ""},
+			{"Status", ""},
+			{"Start Time", ""},
+			{"End Time", ""},
+			{"Duration", ""},
+			{"Spend", ""},
+			{"Prompt Tokens", ""},
+			{"Completion Tokens", ""},
+			{"Total Tokens", ""},
+			{"API Key", ""},
+			{"Team ID", ""},
+			{"Call Type", ""},
+		}
+
+		for i, pair := range infoPairs {
+			var val string
+			switch pair.key {
+			case "Request ID":
+				if v, ok := m.detailData["request_id"]; ok {
+					val = fmt.Sprintf("%v", v)
+				}
+			case "Model":
+				if v, ok := m.detailData["model"]; ok {
+					val = fmt.Sprintf("%v", v)
+				}
+			case "Status":
+				if v, ok := m.detailData["status"]; ok {
+					val = fmt.Sprintf("%v", v)
+				}
+			case "Start Time":
+				if v, ok := m.detailData["startTime"]; ok {
+					val = fmt.Sprintf("%v", v)
+				}
+			case "End Time":
+				if v, ok := m.detailData["endTime"]; ok {
+					val = fmt.Sprintf("%v", v)
+				}
+			case "Duration":
+				if v, ok := m.detailData["latency"]; ok {
+					val = fmt.Sprintf("%v", v)
+				}
+			case "Spend":
+				if v, ok := m.detailData["spend"]; ok {
+					val = fmt.Sprintf("$%v", v)
+				}
+			case "Prompt Tokens":
+				if v, ok := m.detailData["prompt_tokens"]; ok {
+					val = fmt.Sprintf("%v", v)
+				}
+			case "Completion Tokens":
+				if v, ok := m.detailData["completion_tokens"]; ok {
+					val = fmt.Sprintf("%v", v)
+				}
+			case "Total Tokens":
+				if v, ok := m.detailData["total_tokens"]; ok {
+					val = fmt.Sprintf("%v", v)
+				}
+			case "API Key":
+				if v, ok := m.detailData["api_key"]; ok {
+					val = fmt.Sprintf("%v", v)
+				}
+			case "Team ID":
+				if v, ok := m.detailData["team_id"]; ok {
+					val = fmt.Sprintf("%v", v)
+				}
+			case "Call Type":
+				if v, ok := m.detailData["call_type"]; ok {
+					val = fmt.Sprintf("%v", v)
+				}
+			}
+
+			if val != "" && val != "<nil>" {
+				sb.WriteString(keyStyle.Render(pair.key + ":"))
+				sb.WriteString(contentStyle.Render(val))
+				sb.WriteString("\n")
+				infoPairs[i].value = val
+			}
+		}
+
+		// 显示 Error Message (如果有)
+		if errMsg, ok := m.detailData["error_message"]; ok && errMsg != "" {
+			sb.WriteString("\n")
+			sb.WriteString(keyStyle.Render("Error:"))
+			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(fmt.Sprintf("%v", errMsg)))
+			sb.WriteString("\n")
+		}
+
+		// 显示 Metadata (如果有)
+		if metadata, ok := m.detailData["metadata"].(map[string]interface{}); ok && len(metadata) > 0 {
+			sb.WriteString("\n")
+			sb.WriteString(keyStyle.Render("Metadata:"))
+			sb.WriteString("\n")
+			for k, v := range metadata {
+				sb.WriteString(fmt.Sprintf("  %s: %v\n", k, v))
+			}
+		}
+	}
+
+	sb.WriteString("\n")
+	sb.WriteString(mutedStyle.Render("提示: Enter 刷新 | ESC 返回列表"))
+
+	return sb.String()
+}
+
+func (m *logsModel) renderListView() string {
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("86")).
@@ -802,7 +981,7 @@ func (m *logsModel) View() string {
 		content.WriteString("暂无数据")
 	}
 
-	return headerStyle.Render(fmt.Sprintf(" 📊 LiteLLM 日志 (刷新: %ds) | 按 q 退出 ", m.interval)) +
+	return headerStyle.Render(fmt.Sprintf(" 📊 LiteLLM 日志 (刷新: %ds) | ↑↓ 选择 | Enter 查看详情 | q 退出 ", m.interval)) +
 		"\n\n" +
 		content.String() +
 		fmt.Sprintf("\n\n⏱ 更新次数: %d | 时间: %s", m.tick, time.Now().Format("15:04:05"))
@@ -901,6 +1080,39 @@ func (m *logsModel) refresh() {
 
 	m.logData = resp
 	m.logDataOld = nil
+}
+
+func (m *logsModel) loadDetail() {
+	var requestID string
+
+	if m.logData != nil && m.selectedIndex < len(m.logData.Data) {
+		requestID = m.logData.Data[m.selectedIndex].ID
+	} else if m.logDataOld != nil && m.selectedIndex < len(*m.logDataOld) {
+		if id, ok := (*m.logDataOld)[m.selectedIndex]["request_id"]; ok {
+			requestID, _ = id.(string)
+		}
+	}
+
+	if requestID == "" {
+		m.detailError = "无法获取日志ID"
+		m.viewMode = "detail"
+		return
+	}
+
+	m.viewMode = "detail"
+	m.detailData = nil
+	m.detailError = "加载中..."
+
+	// 异步加载详情
+	go func() {
+		detail, err := m.client.GetSpendLogDetail(requestID)
+		if err != nil {
+			m.detailError = fmt.Sprintf("加载失败: %v", err)
+		} else {
+			m.detailData = detail
+			m.detailError = ""
+		}
+	}()
 }
 
 type tickMsg time.Time

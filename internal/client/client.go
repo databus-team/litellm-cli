@@ -33,6 +33,10 @@ func (c *Client) GetSpendLogsUI(startDateTime, endDateTime string) (*api.SpendLo
 	return c.api.GetSpendLogsUI(startDateTime, endDateTime)
 }
 
+func (c *Client) GetSpendLogDetail(requestID string) (map[string]interface{}, error) {
+	return c.api.GetSpendLogDetail(requestID)
+}
+
 func (c *Client) GetModels() (*api.ModelsResponse, error) {
 	return c.api.GetModels()
 }

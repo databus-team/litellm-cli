@@ -209,6 +209,13 @@ func (c *Client) GetSpendLogsUI(startDateTime, endDateTime string) (*SpendLogsUI
 	return &result, err
 }
 
+// GetSpendLogDetail 获取单条日志详情
+func (c *Client) GetSpendLogDetail(requestID string) (map[string]interface{}, error) {
+	var result map[string]interface{}
+	err := c.GetWithCookie(fmt.Sprintf("/spend/logs/ui/%s", requestID), &result, c.jwtToken)
+	return result, err
+}
+
 // ModelsResponse represents /models response
 type ModelsResponse struct {
 	Models []ModelInfo `json:"data"`
