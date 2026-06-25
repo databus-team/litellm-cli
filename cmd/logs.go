@@ -23,6 +23,7 @@ import (
 var (
 	interval int
 	model    string
+	verbose  bool
 )
 
 var logsCmd = &cobra.Command{
@@ -34,10 +35,23 @@ var logsCmd = &cobra.Command{
 func init() {
 	logsCmd.Flags().IntVarP(&interval, "interval", "i", 5, "刷新间隔 (秒)")
 	logsCmd.Flags().StringVarP(&model, "model", "m", "", "过滤模型")
+	logsCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "详细日志模式")
 	rootCmd.AddCommand(logsCmd)
 }
 
 func runLogs(cmd *cobra.Command, args []string) {
+	// 设置日志输出
+	if verbose {
+		logFile, err := os.OpenFile("litellm-cli.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			log.Fatal("无法创建日志文件:", err)
+		}
+		defer logFile.Close()
+		log.SetOutput(logFile)
+		log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+		log.Println("=== LiteLLM CLI 启动 ===")
+	}
+
 	cfg, err := config.LoadWithAutoLogin()
 	if err != nil {
 		log.Fatal(err)
@@ -741,6 +755,7 @@ type logsModel struct {
 	viewMode      string          // "list" 或 "detail"
 	detailData    map[string]interface{}
 	detailError   string
+	detailScroll  int // 详情视图滚动偏移量
 }
 
 func NewLogsModel(c *client.Client, interval int, model string) *logsModel {
@@ -780,31 +795,56 @@ func (m *logsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewMode = "list"
 				m.detailData = nil
 				m.detailError = ""
+				m.detailScroll = 0 // 重置滚动位置
 			}
 			return m, nil
 		case "enter":
 			// 查看详情
 			if m.viewMode == "list" {
+				m.detailScroll = 0 // 重置滚动位置
 				cmd := m.loadDetail()
 				return m, cmd
 			}
 			return m, nil
 		case "up", "k":
-			// 上移选择
-			if m.viewMode == "list" && m.selectedIndex > 0 {
-				m.selectedIndex--
+			// 上移选择或向上滚动
+			if m.viewMode == "list" {
+				if m.selectedIndex > 0 {
+					m.selectedIndex--
+				}
+			} else if m.viewMode == "detail" {
+				if m.detailScroll > 0 {
+					m.detailScroll--
+				}
 			}
 			return m, nil
 		case "down", "j":
-			// 下移选择
-			maxIdx := -1
-			if m.logData != nil && len(m.logData.Data) > 0 {
-				maxIdx = len(m.logData.Data) - 1
-			} else if m.logDataOld != nil && len(*m.logDataOld) > 0 {
-				maxIdx = len(*m.logDataOld) - 1
+			// 下移选择或向下滚动
+			if m.viewMode == "list" {
+				maxIdx := -1
+				if m.logData != nil && len(m.logData.Data) > 0 {
+					maxIdx = len(m.logData.Data) - 1
+				} else if m.logDataOld != nil && len(*m.logDataOld) > 0 {
+					maxIdx = len(*m.logDataOld) - 1
+				}
+				if maxIdx >= 0 && m.selectedIndex < maxIdx {
+					m.selectedIndex++
+				}
+			} else if m.viewMode == "detail" {
+				// 详情视图向下滚动
+				m.detailScroll++
 			}
-			if m.viewMode == "list" && maxIdx >= 0 && m.selectedIndex < maxIdx {
-				m.selectedIndex++
+			return m, nil
+		case "pgup":
+			// 详情视图向上翻页
+			if m.viewMode == "detail" {
+				m.detailScroll = max(0, m.detailScroll-20)
+			}
+			return m, nil
+		case "pgdown":
+			// 详情视图向下翻页
+			if m.viewMode == "detail" {
+				m.detailScroll += 20
 			}
 			return m, nil
 		}
@@ -852,126 +892,199 @@ func (m *logsModel) renderDetailView() string {
 	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).MarginRight(1)
+	groupStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("210"))
+	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("159"))
 
-	var sb strings.Builder
+	var lines []string
 
-	sb.WriteString(headerStyle.Render(" 📋 日志详情 | 按 ESC 返回 | Enter 刷新 ") + "\n\n")
+	lines = append(lines, headerStyle.Render(" 📋 日志详情 | 按 ESC 返回 | Enter 刷新 "))
+	lines = append(lines, "")
 
 	if m.detailError != "" {
-		sb.WriteString(contentStyle.Render(m.detailError))
+		lines = append(lines, contentStyle.Render(m.detailError))
 		if m.detailError == "加载中..." {
-			sb.WriteString(mutedStyle.Render(" ⏳"))
+			lines = append(lines, mutedStyle.Render(" ⏳"))
 		}
-		sb.WriteString("\n")
+	} else if m.detailData == nil {
+		lines = append(lines, mutedStyle.Render("无详情数据，请按 Enter 刷新"))
 	}
 
 	if m.detailData != nil {
-		// 显示关键信息
-		infoPairs := []struct {
-			key   string
-			value string
-		}{
-			{"Request ID", ""},
-			{"Model", ""},
-			{"Status", ""},
-			{"Start Time", ""},
-			{"End Time", ""},
-			{"Duration", ""},
-			{"Spend", ""},
-			{"Prompt Tokens", ""},
-			{"Completion Tokens", ""},
-			{"Total Tokens", ""},
-			{"API Key", ""},
-			{"Team ID", ""},
-			{"Call Type", ""},
-		}
-
-		for i, pair := range infoPairs {
-			var val string
-			switch pair.key {
-			case "Request ID":
-				if v, ok := m.detailData["request_id"]; ok {
-					val = fmt.Sprintf("%v", v)
+		// 1. 处理 response 字段 (OpenAI 格式响应)
+		if response, ok := m.detailData["response"].(map[string]interface{}); ok && response != nil {
+			lines = append(lines, groupStyle.Render("📤 响应 (Response)"))
+			if id, ok := response["id"].(string); ok {
+				lines = append(lines, keyStyle.Render("ID:")+contentStyle.Render(id))
+			}
+			if model, ok := response["model"].(string); ok {
+				lines = append(lines, keyStyle.Render("模型:")+contentStyle.Render(model))
+			}
+			if created, ok := response["created"].(float64); ok {
+				lines = append(lines, keyStyle.Render("创建时间:")+contentStyle.Render(fmt.Sprintf("%.0f", created)))
+			}
+			if object, ok := response["object"].(string); ok {
+				lines = append(lines, keyStyle.Render("类型:")+contentStyle.Render(object))
+			}
+			// Usage
+			if usage, ok := response["usage"].(map[string]interface{}); ok && usage != nil {
+				lines = append(lines, keyStyle.Render("用量:"))
+				var usageParts []string
+				if pt, ok := usage["prompt_tokens"].(float64); ok {
+					usageParts = append(usageParts, fmt.Sprintf("prompt=%.0f", pt))
 				}
-			case "Model":
-				if v, ok := m.detailData["model"]; ok {
-					val = fmt.Sprintf("%v", v)
+				if ct, ok := usage["completion_tokens"].(float64); ok {
+					usageParts = append(usageParts, fmt.Sprintf("completion=%.0f", ct))
 				}
-			case "Status":
-				if v, ok := m.detailData["status"]; ok {
-					val = fmt.Sprintf("%v", v)
+				if tt, ok := usage["total_tokens"].(float64); ok {
+					usageParts = append(usageParts, fmt.Sprintf("total=%.0f", tt))
 				}
-			case "Start Time":
-				if v, ok := m.detailData["startTime"]; ok {
-					val = fmt.Sprintf("%v", v)
-				}
-			case "End Time":
-				if v, ok := m.detailData["endTime"]; ok {
-					val = fmt.Sprintf("%v", v)
-				}
-			case "Duration":
-				if v, ok := m.detailData["latency"]; ok {
-					val = fmt.Sprintf("%v", v)
-				}
-			case "Spend":
-				if v, ok := m.detailData["spend"]; ok {
-					val = fmt.Sprintf("$%v", v)
-				}
-			case "Prompt Tokens":
-				if v, ok := m.detailData["prompt_tokens"]; ok {
-					val = fmt.Sprintf("%v", v)
-				}
-			case "Completion Tokens":
-				if v, ok := m.detailData["completion_tokens"]; ok {
-					val = fmt.Sprintf("%v", v)
-				}
-			case "Total Tokens":
-				if v, ok := m.detailData["total_tokens"]; ok {
-					val = fmt.Sprintf("%v", v)
-				}
-			case "API Key":
-				if v, ok := m.detailData["api_key"]; ok {
-					val = fmt.Sprintf("%v", v)
-				}
-			case "Team ID":
-				if v, ok := m.detailData["team_id"]; ok {
-					val = fmt.Sprintf("%v", v)
-				}
-			case "Call Type":
-				if v, ok := m.detailData["call_type"]; ok {
-					val = fmt.Sprintf("%v", v)
+				lines = append(lines, contentStyle.Render(strings.Join(usageParts, ", ")))
+			}
+			// Choices
+			if choices, ok := response["choices"].([]interface{}); ok && len(choices) > 0 {
+				lines = append(lines, keyStyle.Render("回复:")+fmt.Sprintf(" (%d 个选择)", len(choices)))
+				for _, choice := range choices {
+					if c, ok := choice.(map[string]interface{}); ok {
+						var line string
+						if idx, ok := c["index"].(float64); ok {
+							line += mutedStyle.Render(fmt.Sprintf("  [%.0f]", idx))
+						}
+						if msg, ok := c["message"].(map[string]interface{}); ok {
+							if role, ok := msg["role"].(string); ok {
+								line += keyStyle.Render(fmt.Sprintf(" %s: ", role))
+							}
+							if content, ok := msg["content"].(string); ok {
+								// 限制显示长度
+								maxLen := 200
+								if len(content) > maxLen {
+									content = content[:maxLen] + "..."
+								}
+								content = strings.ReplaceAll(content, "\n", " ")
+								line += valueStyle.Render(content)
+							}
+						}
+						if finishReason, ok := c["finish_reason"].(string); ok {
+							line += mutedStyle.Render(fmt.Sprintf(" (finish: %s)", finishReason))
+						}
+						lines = append(lines, line)
+					}
 				}
 			}
+			lines = append(lines, "")
+		}
 
-			if val != "" && val != "<nil>" {
-				sb.WriteString(keyStyle.Render(pair.key + ":"))
-				sb.WriteString(contentStyle.Render(val))
-				sb.WriteString("\n")
-				infoPairs[i].value = val
+		// 2. 处理 messages 字段
+		if messages, ok := m.detailData["messages"]; ok && messages != nil {
+			lines = append(lines, groupStyle.Render("💬 消息 (Messages)"))
+			if msgMap, ok := messages.(map[string]interface{}); ok {
+				for k, v := range msgMap {
+					lines = append(lines, keyStyle.Render(k+":")+contentStyle.Render(fmt.Sprintf("%v", v)))
+				}
+			} else {
+				lines = append(lines, contentStyle.Render(fmt.Sprintf("%v", messages)))
+			}
+			lines = append(lines, "")
+		}
+
+		// 3. 处理 proxy_server_request 字段
+		if proxyReq, ok := m.detailData["proxy_server_request"].(map[string]interface{}); ok && proxyReq != nil {
+			lines = append(lines, groupStyle.Render("📥 请求 (Proxy Server Request)"))
+			if model, ok := proxyReq["model"].(string); ok {
+				lines = append(lines, keyStyle.Render("模型:")+contentStyle.Render(model))
+			}
+			if messages, ok := proxyReq["messages"].([]interface{}); ok && len(messages) > 0 {
+				lines = append(lines, keyStyle.Render("消息:")+fmt.Sprintf(" (%d 条)", len(messages)))
+				for i, msg := range messages {
+					if mi, ok := msg.(map[string]interface{}); ok {
+						var line string
+						if role, ok := mi["role"].(string); ok {
+							line += mutedStyle.Render(fmt.Sprintf("  [%d] %s: ", i+1, role))
+						}
+						if content, ok := mi["content"].(string); ok {
+							maxLen := 150
+							if len(content) > maxLen {
+								content = content[:maxLen] + "..."
+							}
+							content = strings.ReplaceAll(content, "\n", " ")
+							line += valueStyle.Render(content)
+						}
+						lines = append(lines, line)
+					}
+				}
+			}
+			if temperature, ok := proxyReq["temperature"].(float64); ok {
+				lines = append(lines, keyStyle.Render("temperature:")+contentStyle.Render(fmt.Sprintf("%.1f", temperature)))
+			}
+			if maxTokens, ok := proxyReq["max_tokens"].(float64); ok {
+				lines = append(lines, keyStyle.Render("max_tokens:")+contentStyle.Render(fmt.Sprintf("%.0f", maxTokens)))
+			}
+			lines = append(lines, "")
+		}
+
+		// 4. 其他字段
+		var otherFields []string
+		for apiKey := range m.detailData {
+			if apiKey != "response" && apiKey != "messages" && apiKey != "proxy_server_request" {
+				otherFields = append(otherFields, apiKey)
 			}
 		}
-
-		// 显示 Error Message (如果有)
-		if errMsg, ok := m.detailData["error_message"]; ok && errMsg != "" {
-			sb.WriteString("\n")
-			sb.WriteString(keyStyle.Render("Error:"))
-			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(fmt.Sprintf("%v", errMsg)))
-			sb.WriteString("\n")
-		}
-
-		// 显示 Metadata (如果有)
-		if metadata, ok := m.detailData["metadata"].(map[string]interface{}); ok && len(metadata) > 0 {
-			sb.WriteString("\n")
-			sb.WriteString(keyStyle.Render("Metadata:"))
-			sb.WriteString("\n")
-			for k, v := range metadata {
-				sb.WriteString(fmt.Sprintf("  %s: %v\n", k, v))
+		if len(otherFields) > 0 {
+			lines = append(lines, groupStyle.Render("📊 其他信息"))
+			sort.Strings(otherFields)
+			for _, key := range otherFields {
+				v := m.detailData[key]
+				if v == nil {
+					continue
+				}
+				valStr := fmt.Sprintf("%v", v)
+				// 简化过长字段
+				if len(valStr) > 100 {
+					valStr = valStr[:100] + "..."
+				}
+				lines = append(lines, keyStyle.Render(key+":")+contentStyle.Render(valStr))
 			}
 		}
 	}
 
-	sb.WriteString("\n")
-	sb.WriteString(mutedStyle.Render("提示: Enter 刷新 | ESC 返回列表"))
+	// 底部提示
+	lines = append(lines, "")
+	lines = append(lines, mutedStyle.Render("提示: ↑↓ 滚动 | Enter 刷新 | ESC 返回"))
+
+	// 计算滚动 - 预留 2 行给头部，1 行给底部提示
+	scrollOffset := m.detailScroll
+	maxDisplayLines := m.height - 3
+	if maxDisplayLines < 10 {
+		maxDisplayLines = 20
+	}
+
+	// 确保滚动不越界
+	totalLines := len(lines)
+	if scrollOffset > totalLines-maxDisplayLines {
+		scrollOffset = max(0, totalLines-maxDisplayLines)
+		m.detailScroll = scrollOffset
+	}
+
+	// 截取需要显示的行
+	endLine := scrollOffset + maxDisplayLines
+	if endLine > totalLines {
+		endLine = totalLines
+	}
+	visibleLines := lines[scrollOffset:endLine]
+
+	// 构建最终输出
+	var sb strings.Builder
+	for i, line := range visibleLines {
+		sb.WriteString(line)
+		if i < len(visibleLines)-1 {
+			sb.WriteString("\n")
+		}
+	}
+
+	// 添加滚动指示器
+	if scrollOffset > 0 || endLine < totalLines {
+		sb.WriteString("\n")
+		sb.WriteString(mutedStyle.Render(fmt.Sprintf(" ──◀ %d/%d ▶─ ", scrollOffset+1, totalLines)))
+	}
 
 	return sb.String()
 }
@@ -1120,6 +1233,11 @@ func (m *logsModel) loadDetail() tea.Cmd {
 		if id, ok := (*m.logDataOld)[m.selectedIndex]["request_id"]; ok {
 			requestID, _ = id.(string)
 		}
+	} else {
+		// 无法获取数据
+		m.detailError = "暂无数据"
+		m.viewMode = "detail"
+		return nil
 	}
 
 	if requestID == "" {
@@ -1134,9 +1252,15 @@ func (m *logsModel) loadDetail() tea.Cmd {
 
 	// 异步加载详情
 	return func() tea.Msg {
+		log.Printf("[loadDetail] 开始加载详情, requestID=%s", requestID)
 		detail, err := m.client.GetSpendLogDetail(requestID)
 		if err != nil {
-			return detailLoadedMsg{error: fmt.Sprintf("加载失败: %v", err)}
+			log.Printf("[loadDetail] 请求失败: %v", err)
+			return detailLoadedMsg{error: fmt.Sprintf("请求失败: %v", err)}
+		}
+		log.Printf("[loadDetail] 请求完成, detail=%v", detail)
+		if detail == nil {
+			return detailLoadedMsg{error: "API 返回空数据，请确认日志详情接口是否可用"}
 		}
 		return detailLoadedMsg{data: detail}
 	}
