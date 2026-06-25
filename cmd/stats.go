@@ -475,15 +475,17 @@ func (m *statsModel) renderCounterView() string {
 	}
 
 	// 卡片宽度
-	cardWidth := 20
+	cardWidth := 22
 
-	// 按行渲染
+	// 确保所有卡片高度一致
+	cardHeight := 4
+
 	for row := 0; row < len(metrics); row += cols {
 		var rowCards []string
 		for col := 0; col < cols && row+col < len(metrics); col++ {
 			metric := metrics[row+col]
 			card := labelStyle.Render(metric.label) + "\n" + valueStyle.Render(metric.value)
-			rowCards = append(rowCards, cardStyle.Width(cardWidth).Render(card))
+			rowCards = append(rowCards, cardStyle.Width(cardWidth).Height(cardHeight).AlignVertical(lipgloss.Top).Render(card))
 		}
 		// 使用空格连接一行中的卡片
 		sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, rowCards...))
