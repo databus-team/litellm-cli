@@ -438,7 +438,7 @@ func printSpendLogs(resp *api.SpendLogsResponse, tick int, modelFilter string) {
 }
 
 // renderLogsTable 渲染日志表格 (用于 TUI 模式)
-func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]bool, maxRows int) string {
+func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]bool, maxRows int, selectedIndex int) string {
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
@@ -448,6 +448,9 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 	// 新记录高亮样式 (青色粗体)
 	newHighlightStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("51"))
 	newHighlightMutedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("36"))
+	// 选中行样式 (反色背景)
+	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("86"))
+	selectedMutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("86")).Bold(true)
 
 	padRight := func(s string, width int) string {
 		w := runewidth.StringWidth(s)
@@ -555,13 +558,16 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 
 	// 打印数据
 	rowCount := 0
-	for _, entry := range data {
+	for i, entry := range data {
 		// 限制显示行数，预留2行给表头和分隔线
 		if maxRows > 0 && rowCount >= maxRows-2 {
 			sb.WriteString(mutedStyle.Render(fmt.Sprintf("\n... 还有 %d 条记录 (总 %d)", len(data)-rowCount, total)))
 			break
 		}
 		rowCount++
+
+		// 判断是否被选中
+		isSelected := i == selectedIndex
 
 		startTime := formatLocalTime(entry.StartTime)
 
@@ -617,7 +623,16 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 		// 判断样式
 		var timeStyle, statusStyle, spendStyle, latencyStyle, tokensStyle, modelStyle, tagStyle lipgloss.Style
 
-		if isNew {
+		if isSelected {
+			// 选中行使用反色样式
+			timeStyle = selectedStyle
+			statusStyle = selectedStyle
+			spendStyle = selectedStyle
+			latencyStyle = selectedStyle
+			tokensStyle = selectedStyle
+			modelStyle = selectedStyle
+			tagStyle = selectedMutedStyle
+		} else if isNew {
 			// 新记录使用高亮样式
 			timeStyle = newHighlightStyle
 			statusStyle = newHighlightStyle
@@ -660,7 +675,7 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 }
 
 // renderLogsTableOld 渲染旧版日志表格 (用于 TUI 模式回退)
-func renderLogsTableOld(resp *api.SpendLogsResponse, intervalVal int, newLogIDs map[string]bool, maxRows int) string {
+func renderLogsTableOld(resp *api.SpendLogsResponse, intervalVal int, newLogIDs map[string]bool, maxRows int, selectedIndex int) string {
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
@@ -730,12 +745,16 @@ type logsModel struct {
 
 func NewLogsModel(c *client.Client, interval int, model string) *logsModel {
 	m := &logsModel{
-		client:     c,
-		interval:   interval,
-		model:      model,
-		data:       "加载中...",
-		seenLogIDs: make(map[string]bool),
-		newLogIDs:  make(map[string]bool),
+		client:       c,
+		interval:     interval,
+		model:        model,
+		data:         "加载中...",
+		seenLogIDs:   make(map[string]bool),
+		newLogIDs:    make(map[string]bool),
+		width:        120,  // 默认宽度
+		height:       40,   // 默认高度
+		viewMode:     "list", // 默认视图模式
+		selectedIndex: 0,
 	}
 	m.refresh()
 	return m
@@ -750,7 +769,8 @@ func (m *logsModel) Init() tea.Cmd {
 func (m *logsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.String() {
+		key := msg.String()
+		switch key {
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
@@ -765,7 +785,8 @@ func (m *logsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			// 查看详情
 			if m.viewMode == "list" {
-				m.loadDetail()
+				cmd := m.loadDetail()
+				return m, cmd
 			}
 			return m, nil
 		case "up", "k":
@@ -776,13 +797,13 @@ func (m *logsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "down", "j":
 			// 下移选择
-			maxIdx := 0
-			if m.logData != nil {
+			maxIdx := -1
+			if m.logData != nil && len(m.logData.Data) > 0 {
 				maxIdx = len(m.logData.Data) - 1
-			} else if m.logDataOld != nil {
+			} else if m.logDataOld != nil && len(*m.logDataOld) > 0 {
 				maxIdx = len(*m.logDataOld) - 1
 			}
-			if m.viewMode == "list" && m.selectedIndex < maxIdx {
+			if m.viewMode == "list" && maxIdx >= 0 && m.selectedIndex < maxIdx {
 				m.selectedIndex++
 			}
 			return m, nil
@@ -796,6 +817,14 @@ func (m *logsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Tick(time.Duration(m.interval)*time.Second, func(t time.Time) tea.Msg {
 			return tickMsg(t)
 		})
+	case detailLoadedMsg:
+		if msg.error != "" {
+			m.detailError = msg.error
+		} else {
+			m.detailData = msg.data
+			m.detailError = ""
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -974,9 +1003,9 @@ func (m *logsModel) renderListView() string {
 			}
 			filteredData = filtered
 		}
-		content.WriteString(renderLogsTable(filteredData, int(m.logData.Total), m.newLogIDs, availableRows))
+		content.WriteString(renderLogsTable(filteredData, int(m.logData.Total), m.newLogIDs, availableRows, m.selectedIndex))
 	} else if m.logDataOld != nil && len(*m.logDataOld) > 0 {
-		content.WriteString(renderLogsTableOld(m.logDataOld, m.interval, m.newLogIDs, availableRows))
+		content.WriteString(renderLogsTableOld(m.logDataOld, m.interval, m.newLogIDs, availableRows, m.selectedIndex))
 	} else {
 		content.WriteString("暂无数据")
 	}
@@ -1082,7 +1111,7 @@ func (m *logsModel) refresh() {
 	m.logDataOld = nil
 }
 
-func (m *logsModel) loadDetail() {
+func (m *logsModel) loadDetail() tea.Cmd {
 	var requestID string
 
 	if m.logData != nil && m.selectedIndex < len(m.logData.Data) {
@@ -1096,7 +1125,7 @@ func (m *logsModel) loadDetail() {
 	if requestID == "" {
 		m.detailError = "无法获取日志ID"
 		m.viewMode = "detail"
-		return
+		return nil
 	}
 
 	m.viewMode = "detail"
@@ -1104,15 +1133,17 @@ func (m *logsModel) loadDetail() {
 	m.detailError = "加载中..."
 
 	// 异步加载详情
-	go func() {
+	return func() tea.Msg {
 		detail, err := m.client.GetSpendLogDetail(requestID)
 		if err != nil {
-			m.detailError = fmt.Sprintf("加载失败: %v", err)
-		} else {
-			m.detailData = detail
-			m.detailError = ""
+			return detailLoadedMsg{error: fmt.Sprintf("加载失败: %v", err)}
 		}
-	}()
+		return detailLoadedMsg{data: detail}
+	}
 }
 
 type tickMsg time.Time
+type detailLoadedMsg struct {
+	data  map[string]interface{}
+	error string
+}
