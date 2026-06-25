@@ -701,8 +701,9 @@ type logsModel struct {
 	quitting    bool
 	logData     *api.SpendLogsUIResponse
 	logDataOld  *api.SpendLogsResponse
-	seenLogIDs  map[string]bool  // 已看到的日志ID
+	seenLogIDs  map[string]bool // 已看到的日志ID
 	newLogIDs   map[string]bool // 本次新增的日志ID（用于高亮）
+	initialized bool            // 是否已完成首次加载
 }
 
 func NewLogsModel(c *client.Client, interval int, model string) *logsModel {
@@ -807,6 +808,21 @@ func (m *logsModel) refresh() {
 		}
 		m.data = fmt.Sprintf("✅ 获取到 %d 条日志记录", len(*respOld))
 
+		// 首次加载只记录日志ID，不高亮
+		if !m.initialized {
+			m.initialized = true
+			for _, entry := range *respOld {
+				if id, ok := entry["request_id"]; ok {
+					if logID, ok := id.(string); ok {
+						m.seenLogIDs[logID] = true
+					}
+				}
+			}
+			m.logData = nil
+			m.logDataOld = respOld
+			return
+		}
+
 		// 识别新增日志
 		m.newLogIDs = make(map[string]bool)
 		for _, entry := range *respOld {
@@ -835,6 +851,17 @@ func (m *logsModel) refresh() {
 	}
 
 	m.data = fmt.Sprintf("✅ 获取到 %d 条日志记录 (总 %d)", len(resp.Data), resp.Total)
+
+	// 首次加载只记录日志ID，不高亮
+	if !m.initialized {
+		m.initialized = true
+		for _, entry := range resp.Data {
+			m.seenLogIDs[entry.ID] = true
+		}
+		m.logData = resp
+		m.logDataOld = nil
+		return
+	}
 
 	// 识别新增日志
 	m.newLogIDs = make(map[string]bool)
