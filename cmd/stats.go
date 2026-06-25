@@ -474,15 +474,23 @@ func (m *statsModel) renderCounterView() string {
 		cols = 1
 	}
 
-	for i, metric := range metrics {
-		card := labelStyle.Render(metric.label) + "\n" + valueStyle.Render(metric.value)
-		sb.WriteString(cardStyle.Width(20).Render(card))
-		if (i+1)%cols == 0 {
-			sb.WriteString("\n")
+	// 卡片宽度
+	cardWidth := 18
+
+	// 按行渲染
+	for row := 0; row < len(metrics); row += cols {
+		var rowCards []string
+		for col := 0; col < cols && row+col < len(metrics); col++ {
+			metric := metrics[row+col]
+			card := labelStyle.Render(metric.label) + "\n" + valueStyle.Render(metric.value)
+			rowCards = append(rowCards, cardStyle.Width(cardWidth).Render(card))
 		}
+		// 使用空格连接一行中的卡片
+		sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, rowCards...))
+		sb.WriteString("\n")
 	}
 
-	sb.WriteString("\n\n")
+	sb.WriteString("\n")
 	sb.WriteString(helpStyle.Render("  Tab: 切换视图  |  j/k 或 ↓/↑: 在图表视图中导航  |  q: 退出"))
 
 	return sb.String()
