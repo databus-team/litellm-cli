@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -120,66 +121,102 @@ func printSpendLogsUI(resp *api.SpendLogsUIResponse, tick int, modelFilter strin
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
 	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	yellowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
 
-	fmt.Println(headerStyle.Render(fmt.Sprintf(" 📊 LiteLLM 实时日志 (刷新: %ds) | Ctrl+C 退出 ", interval)))
+	fmt.Println(headerStyle.Render(fmt.Sprintf(" 📊 LiteLLM 实时日志 (刷新: %ds) | 按 q 退出 ", interval)))
 	fmt.Println()
 
 	if resp == nil || len(resp.Data) == 0 {
 		fmt.Println(contentStyle.Render("暂无数据"))
 	} else {
+		// 表头
+		fmt.Println(headerStyle.Render("时间                    状态    费用      耗时     Tokens     模型"))
+		fmt.Println(mutedStyle.Render(strings.Repeat("─", 90)))
+
 		// 显示日志条目
+		count := 0
 		for _, entry := range resp.Data {
 			// 过滤模型
-			if modelFilter != "" && entry.Model != modelFilter {
+			if modelFilter != "" && !strings.Contains(entry.Model, modelFilter) {
 				continue
 			}
+			count++
 
-			// 状态图标和颜色
-			statusIcon := "✓"
-			if entry.Status != "success" {
-				statusIcon = "✗"
-			}
-
-			// 时间
+			// 时间 (只显示日期和时间)
 			startTime := entry.StartTime
-			if len(startTime) > 19 {
-				startTime = startTime[:19]
+			if len(startTime) >= 19 {
+				startTime = startTime[:16] // 去掉秒和时区
+				startTime = strings.Replace(startTime, "T", " ", 1)
 			}
 
-			// 显示
-			fmt.Printf("%s %s ", statusIcon, contentStyle.Render(startTime))
-			fmt.Printf("📦 %s ", contentStyle.Render(entry.Model))
-
-			// Tokens
-			if entry.TotalTokens > 0 {
-				fmt.Printf("🔢 %d tokens ", entry.TotalTokens)
+			// 状态
+			status := "✓"
+			if entry.Status != "success" && entry.ErrorMessage != "" {
+				status = "✗"
 			}
 
 			// 费用
+			spendStr := "-"
 			if entry.TotalSpend > 0 {
-				fmt.Printf("%s", greenStyle.Render(fmt.Sprintf("$%.4f", entry.TotalSpend)))
+				spendStr = fmt.Sprintf("$%.2f", entry.TotalSpend)
 			}
 
-			// 延迟
+			// 耗时
+			latencyStr := "-"
 			if entry.Latency > 0 {
-				fmt.Printf(" ⏱ %.2fs", entry.Latency)
+				latencyStr = fmt.Sprintf("%.2fs", entry.Latency)
 			}
 
-			// 错误信息
-			if entry.ErrorMessage != "" {
-				fmt.Printf(" %s", errorStyle.Render(entry.ErrorMessage))
+			// Tokens
+			tokensStr := fmt.Sprintf("%d", entry.TotalTokens)
+			if entry.TotalTokens >= 1000000 {
+				tokensStr = fmt.Sprintf("%.1fM", float64(entry.TotalTokens)/1000000)
+			} else if entry.TotalTokens >= 1000 {
+				tokensStr = fmt.Sprintf("%.1fK", float64(entry.TotalTokens)/1000)
 			}
 
-			fmt.Println()
+			// 模型 (截断)
+			model := entry.Model
+			if len(model) > 30 {
+				model = model[:30]
+			}
+
+			// Tags (从 metadata 提取 user_api_key_alias)
+			tag := ""
+			if entry.Metadata != nil {
+				if alias, ok := entry.Metadata["user_api_key_alias"].(string); ok {
+					tag = alias
+				}
+			}
+
+			// 打印行
+			if entry.Status != "success" && entry.ErrorMessage != "" {
+				fmt.Printf("%s %s %s %s %s %s %s\n",
+					contentStyle.Render(startTime),
+					errorStyle.Render(status),
+					greenStyle.Render(fmt.Sprintf("%-8s", spendStr)),
+					yellowStyle.Render(fmt.Sprintf("%-7s", latencyStr)),
+					contentStyle.Render(fmt.Sprintf("%-8s", tokensStr)),
+					contentStyle.Render(model),
+					mutedStyle.Render(tag))
+			} else {
+				fmt.Printf("%s %s %s %s %s %s %s\n",
+					contentStyle.Render(startTime),
+					greenStyle.Render(status),
+					greenStyle.Render(fmt.Sprintf("%-8s", spendStr)),
+					yellowStyle.Render(fmt.Sprintf("%-7s", latencyStr)),
+					contentStyle.Render(fmt.Sprintf("%-8s", tokensStr)),
+					contentStyle.Render(model),
+					mutedStyle.Render(tag))
+			}
 		}
 
 		fmt.Println()
-		fmt.Println(mutedStyle.Render(fmt.Sprintf("共 %d 条记录 (总 %d)", len(resp.Data), resp.Total)))
+		fmt.Println(mutedStyle.Render(fmt.Sprintf("共 %d 条记录 (总 %d)", count, resp.Total)))
 	}
 
 	fmt.Println()
 	fmt.Printf("⏱ 更新次数: %d | 时间: %s\n", tick, time.Now().Format("15:04:05"))
-	fmt.Println(mutedStyle.Render("\n提示: 使用 --text 或 -t 参数可在非交互环境运行"))
 }
 
 // printSpendLogs 回退使用的旧格式显示
