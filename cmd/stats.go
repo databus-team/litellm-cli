@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -28,7 +29,7 @@ func init() {
 }
 
 func runStats(cmd *cobra.Command, args []string) {
-	cfg, err := config.Load()
+	cfg, err := config.LoadWithAutoLogin()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -98,9 +99,9 @@ func printUserStats(c *client.Client, startDate, endDate string) {
 	// 显示汇总
 	fmt.Println("\n📈 汇总")
 	fmt.Printf("   💰 花费: $%.4f\n", totalSpend)
-	fmt.Printf("   📝 Prompt Tokens: %d\n", totalPrompt)
-	fmt.Printf("   ✍️ Completion Tokens: %d\n", totalCompletion)
-	fmt.Printf("   📊 总 Tokens: %d\n", totalTokens)
+	fmt.Printf("   📝 Prompt Tokens: %s\n", formatTokens(totalPrompt))
+	fmt.Printf("   ✍️ Completion Tokens: %s\n", formatTokens(totalCompletion))
+	fmt.Printf("   📊 总 Tokens: %s\n", formatTokens(totalTokens))
 	fmt.Printf("   ✅ 成功请求: %d\n", totalSuccess)
 	fmt.Printf("   ❌ 失败请求: %d\n", totalFailed)
 	fmt.Printf("   📤 总请求: %d\n", totalRequests)
@@ -108,11 +109,37 @@ func printUserStats(c *client.Client, startDate, endDate string) {
 	// 显示最近几天的明细
 	if len(resp.Results) > 1 {
 		fmt.Println("\n📅 最近几天:")
-		for i := 0; i < min(5, len(resp.Results)); i++ {
+		fmt.Printf("   %-12s %-10s %-8s %-10s %-10s %-10s %-10s\n",
+			"日期", "Cost", "Requests", "Input", "Output", "Total", "成功率")
+		fmt.Println("   " + strings.Repeat("-", 75))
+
+		days := min(7, len(resp.Results))
+		for i := 0; i < days; i++ {
 			r := resp.Results[i]
-			fmt.Printf("   %s: $%.4f (%d 请求)\n", r.Date, r.Metrics.Spend, r.Metrics.APIRequests)
+			successRate := 0.0
+			if r.Metrics.APIRequests > 0 {
+				successRate = float64(r.Metrics.SuccessfulRequests) / float64(r.Metrics.APIRequests) * 100
+			}
+			fmt.Printf("   %-12s $%-9.2f %-8d %-10s %-10s %-10s %-8.1f%%\n",
+				r.Date,
+				r.Metrics.Spend,
+				r.Metrics.APIRequests,
+				formatTokens(r.Metrics.PromptTokens),
+				formatTokens(r.Metrics.CompletionTokens),
+				formatTokens(r.Metrics.TotalTokens),
+				successRate,
+			)
 		}
 	}
+}
+
+func formatTokens(n int64) string {
+	if n >= 1_000_000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	} else if n >= 1_000 {
+		return fmt.Sprintf("%.1fK", float64(n)/1_000)
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 func printTeamStats(c *client.Client, startDate, endDate string) {
@@ -133,9 +160,9 @@ func printTeamStats(c *client.Client, startDate, endDate string) {
 	latest := resp.Results[0]
 	fmt.Printf("\n📅 %s\n", latest.Date)
 	fmt.Printf("   💰 花费: $%.4f\n", latest.Metrics.Spend)
-	fmt.Printf("   📝 Prompt Tokens: %d\n", latest.Metrics.PromptTokens)
-	fmt.Printf("   ✍️ Completion Tokens: %d\n", latest.Metrics.CompletionTokens)
-	fmt.Printf("   📊 总 Tokens: %d\n", latest.Metrics.TotalTokens)
+	fmt.Printf("   📝 Prompt Tokens: %s\n", formatTokens(latest.Metrics.PromptTokens))
+	fmt.Printf("   ✍️ Completion Tokens: %s\n", formatTokens(latest.Metrics.CompletionTokens))
+	fmt.Printf("   📊 总 Tokens: %s\n", formatTokens(latest.Metrics.TotalTokens))
 	fmt.Printf("   ✅ 成功请求: %d\n", latest.Metrics.SuccessfulRequests)
 	fmt.Printf("   ❌ 失败请求: %d\n", latest.Metrics.FailedRequests)
 	fmt.Printf("   📤 总请求: %d\n", latest.Metrics.APIRequests)
@@ -144,7 +171,7 @@ func printTeamStats(c *client.Client, startDate, endDate string) {
 	if len(latest.Breakdown.Models) > 0 {
 		fmt.Println("\n📦 按模型:")
 		for model, data := range latest.Breakdown.Models {
-			fmt.Printf("   %s: $%.4f (%d tokens)\n", model, data.Metrics.Spend, data.Metrics.TotalTokens)
+			fmt.Printf("   %s: $%.4f (%s tokens)\n", model, data.Metrics.Spend, formatTokens(data.Metrics.TotalTokens))
 		}
 	}
 }

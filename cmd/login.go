@@ -38,17 +38,17 @@ func runLogin(cmd *cobra.Command, args []string) {
 
 	baseURL := config.GetBaseURL()
 
-	// 构建登录请求
+	// 构建登录请求 - 使用 JSON 格式
 	loginURL := baseURL + "/v2/login"
-	data := url.Values{}
-	data.Set("username", loginUser)
-	data.Set("password", loginPassword)
+	data := fmt.Sprintf(`{"username":"%s","password":"%s"}`, loginUser, loginPassword)
 
-	req, err := http.NewRequest("POST", loginURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequest("POST", loginURL, strings.NewReader(data))
 	if err != nil {
 		log.Fatalf("创建请求失败: %v", err)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -57,53 +57,62 @@ func runLogin(cmd *cobra.Command, args []string) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		log.Fatalf("登录失败: %s", string(body))
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatalf("读取响应失败: %v", err)
 	}
 
-	// 从 Set-Cookie 提取 token
+	// 解析响应
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		log.Fatalf("解析响应失败: %v", err)
+	}
+
+	// 检查是否有重定向 URL，其中包含 token
+	redirectURL, ok := result["redirect_url"].(string)
+	if !ok || redirectURL == "" {
+		fmt.Printf("响应: %s\n", string(body))
+		log.Fatal("未找到 redirect_url")
+	}
+
+	// 从 redirect_url 中提取 token
 	token := ""
-	for _, cookie := range resp.Cookies() {
-		if cookie.Name == "token" {
-			token = cookie.Value
-			break
+	if strings.Contains(redirectURL, "token=") {
+		u, err := url.Parse(redirectURL)
+		if err == nil {
+			token = u.Query().Get("token")
 		}
 	}
 
 	if token == "" {
-		log.Fatal("未找到 token，请检查登录是否成功")
+		fmt.Printf("响应: %s\n", string(body))
+		log.Fatal("未找到 token")
 	}
 
-	// JWT decode 提取 key
-	apiKey, err := extractKeyFromJWT(token)
+	// 从 JWT 中提取 key 和 user_id
+	key, userID, err := extractKeyFromJWT(token)
 	if err != nil {
-		log.Fatalf("解析 token 失败: %v", err)
+		log.Fatalf("解析 JWT 失败: %v", err)
 	}
 
-	// 显示结果
-	fmt.Println("\n✅ 登录成功!")
-	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	fmt.Printf("Token: %s...\n", token[:50])
-	fmt.Printf("API Key: %s\n", apiKey)
-	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	fmt.Println("\n使用方式:")
-	fmt.Printf("  方式1: export LITELLM_API_KEY=%s\n", apiKey)
-	fmt.Printf("  方式2: litellm-cli --api-key=%s stats\n", apiKey)
-	fmt.Printf("  方式3: 写入配置文件 ~/.litellm-cli.yaml:\n")
-	fmt.Printf("           api_key: %s\n", apiKey)
+	// 保存到缓存
+	config.SaveTokenCache(loginUser, key, token, userID)
+
+	fmt.Println("✅ 登录成功!")
+	fmt.Printf("   用户: %s\n", loginUser)
+	fmt.Printf("   API Key: %s\n", key[:min(20, len(key))]+"...")
+	fmt.Printf("   JWT Token: 已保存\n")
+	fmt.Printf("   User ID: %s\n", userID)
 }
 
-func extractKeyFromJWT(tokenString string) (string, error) {
+// extractKeyFromJWT 从 JWT token 中提取 key 和 user_id
+func extractKeyFromJWT(tokenString string) (string, string, error) {
 	parts := strings.Split(tokenString, ".")
 	if len(parts) != 3 {
-		return "", fmt.Errorf("无效的 JWT token")
+		return "", "", fmt.Errorf("无效的 JWT token")
 	}
 
-	// 解码 payload (第二部分)
-	// JWT 使用 URL-safe base64，需要转换
 	payload := parts[1]
-	// 添加 padding
 	switch len(payload) % 4 {
 	case 2:
 		payload += "=="
@@ -113,20 +122,27 @@ func extractKeyFromJWT(tokenString string) (string, error) {
 
 	decoded, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil {
-		return "", fmt.Errorf("解码失败: %v", err)
+		return "", "", err
 	}
 
-	// 解析 JSON
 	var claims map[string]interface{}
 	if err := json.Unmarshal(decoded, &claims); err != nil {
-		return "", fmt.Errorf("解析 JSON 失败: %v", err)
+		return "", "", err
 	}
 
-	// 提取 key
 	key, ok := claims["key"].(string)
 	if !ok {
-		return "", fmt.Errorf("token 中未找到 key")
+		return "", "", fmt.Errorf("token 中未找到 key")
 	}
 
-	return key, nil
+	userID, _ := claims["user_id"].(string)
+
+	return key, userID, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
