@@ -20,7 +20,7 @@ func init() {
 }
 
 func runKeyInfo(cmd *cobra.Command, args []string) {
-	cfg, err := config.Load()
+	cfg, err := config.LoadWithAutoLogin()
 	if err != nil {
 		log.Fatal(err)
 	}

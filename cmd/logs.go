@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
+	"litellm-cli/internal/api"
 	"litellm-cli/internal/client"
 	"litellm-cli/internal/config"
 )
@@ -35,7 +37,7 @@ func init() {
 }
 
 func runLogs(cmd *cobra.Command, args []string) {
-	cfg, err := config.Load()
+	cfg, err := config.LoadWithAutoLogin()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -89,15 +91,99 @@ func clearScreen() {
 }
 
 func printLogs(c *client.Client, model string, tick int) {
-	endDate := time.Now().Format("2006-01-02")
-	startDate := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	// 使用 datetime 格式，并 URL 编码空格
+	endDate := url.QueryEscape(time.Now().Format("2006-01-02 15:04:05"))
+	startDate := url.QueryEscape(time.Now().AddDate(0, 0, -1).Format("2006-01-02 15:04:05"))
 
-	resp, err := c.GetSpendLogs(startDate, endDate)
+	// 优先使用 /spend/logs/ui (需要 JWT token)
+	resp, err := c.GetSpendLogsUI(startDate, endDate)
 	if err != nil {
-		fmt.Printf("❌ 获取失败: %v\n", err)
+		// 如果失败，回退到旧的 /spend/logs
+		respOld, err2 := c.GetSpendLogs(
+			time.Now().AddDate(0, 0, -1).Format("2006-01-02"),
+			time.Now().Format("2006-01-02"),
+		)
+		if err2 != nil {
+			fmt.Printf("❌ 获取失败: %v\n", err)
+			return
+		}
+		printSpendLogs(respOld, tick, model)
 		return
 	}
 
+	printSpendLogsUI(resp, tick, model)
+}
+
+func printSpendLogsUI(resp *api.SpendLogsUIResponse, tick int, modelFilter string) {
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
+	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
+	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+
+	fmt.Println(headerStyle.Render(fmt.Sprintf(" 📊 LiteLLM 实时日志 (刷新: %ds) | Ctrl+C 退出 ", interval)))
+	fmt.Println()
+
+	if resp == nil || len(resp.Data) == 0 {
+		fmt.Println(contentStyle.Render("暂无数据"))
+	} else {
+		// 显示日志条目
+		for _, entry := range resp.Data {
+			// 过滤模型
+			if modelFilter != "" && entry.Model != modelFilter {
+				continue
+			}
+
+			// 状态图标和颜色
+			statusIcon := "✓"
+			if entry.Status != "success" {
+				statusIcon = "✗"
+			}
+
+			// 时间
+			startTime := entry.StartTime
+			if len(startTime) > 19 {
+				startTime = startTime[:19]
+			}
+
+			// 显示
+			fmt.Printf("%s %s ", statusIcon, contentStyle.Render(startTime))
+			fmt.Printf("📦 %s ", contentStyle.Render(entry.Model))
+
+			// Tokens
+			if entry.TotalTokens > 0 {
+				fmt.Printf("🔢 %d tokens ", entry.TotalTokens)
+			}
+
+			// 费用
+			if entry.TotalSpend > 0 {
+				fmt.Printf("%s", greenStyle.Render(fmt.Sprintf("$%.4f", entry.TotalSpend)))
+			}
+
+			// 延迟
+			if entry.Latency > 0 {
+				fmt.Printf(" ⏱ %.2fs", entry.Latency)
+			}
+
+			// 错误信息
+			if entry.ErrorMessage != "" {
+				fmt.Printf(" %s", errorStyle.Render(entry.ErrorMessage))
+			}
+
+			fmt.Println()
+		}
+
+		fmt.Println()
+		fmt.Println(mutedStyle.Render(fmt.Sprintf("共 %d 条记录 (总 %d)", len(resp.Data), resp.Total)))
+	}
+
+	fmt.Println()
+	fmt.Printf("⏱ 更新次数: %d | 时间: %s\n", tick, time.Now().Format("15:04:05"))
+	fmt.Println(mutedStyle.Render("\n提示: 使用 --text 或 -t 参数可在非交互环境运行"))
+}
+
+// printSpendLogs 回退使用的旧格式显示
+func printSpendLogs(resp *api.SpendLogsResponse, tick int, modelFilter string) {
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
@@ -109,9 +195,7 @@ func printLogs(c *client.Client, model string, tick int) {
 	if resp == nil || len(*resp) == 0 {
 		fmt.Println(contentStyle.Render("暂无数据"))
 	} else {
-		// 显示每个 key 的汇总
 		for _, entry := range *resp {
-			// 获取 spend
 			spendVal, hasSpend := entry["spend"]
 			if hasSpend {
 				spend, _ := spendVal.(float64)
@@ -137,28 +221,13 @@ func printLogs(c *client.Client, model string, tick int) {
 			}
 		}
 
-		// 显示所有模型汇总
-		fmt.Println()
-		fmt.Println(contentStyle.Render("📈 按模型:"))
-		for _, entry := range *resp {
-			models, ok := entry["models"].(map[string]interface{})
-			if !ok {
-				continue
-			}
-			for m, mValue := range models {
-				if mFloat, ok := mValue.(float64); ok {
-					fmt.Printf("   • %s: %s\n", m, greenStyle.Render(fmt.Sprintf("$%.4f", mFloat)))
-				}
-			}
-		}
-
 		fmt.Println()
 		fmt.Println(mutedStyle.Render(fmt.Sprintf("共 %d 条记录", len(*resp))))
 	}
 
 	fmt.Println()
 	fmt.Printf("⏱ 更新次数: %d | 时间: %s\n", tick, time.Now().Format("15:04:05"))
-	fmt.Println(mutedStyle.Render("\n提示: 使用 --text 或 -t 参数可在非交互环境运行"))
+	fmt.Println(mutedStyle.Render("\n提示: 使用 --text 或 -t 参数可在非交互环境运行 (回退模式)"))
 }
 
 // TUI 模式
@@ -226,21 +295,36 @@ func (m *logsModel) View() string {
 }
 
 func (m *logsModel) refresh() {
-	endDate := time.Now().Format("2006-01-02")
-	startDate := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	// 使用 datetime 格式，并 URL 编码空格
+	endDate := url.QueryEscape(time.Now().Format("2006-01-02 15:04:05"))
+	startDate := url.QueryEscape(time.Now().AddDate(0, 0, -1).Format("2006-01-02 15:04:05"))
 
-	resp, err := m.client.GetSpendLogs(startDate, endDate)
+	// 优先使用 /spend/logs/ui
+	resp, err := m.client.GetSpendLogsUI(startDate, endDate)
 	if err != nil {
-		m.data = fmt.Sprintf("❌ 获取失败: %v", err)
+		// 回退到旧的 /spend/logs
+		respOld, err2 := m.client.GetSpendLogs(
+			time.Now().AddDate(0, 0, -1).Format("2006-01-02"),
+			time.Now().Format("2006-01-02"),
+		)
+		if err2 != nil {
+			m.data = fmt.Sprintf("❌ 获取失败: %v", err)
+			return
+		}
+		if respOld == nil || len(*respOld) == 0 {
+			m.data = "暂无数据"
+			return
+		}
+		m.data = fmt.Sprintf("✅ 获取到 %d 条日志记录", len(*respOld))
 		return
 	}
 
-	if resp == nil || len(*resp) == 0 {
+	if resp == nil || len(resp.Data) == 0 {
 		m.data = "暂无数据"
 		return
 	}
 
-	m.data = fmt.Sprintf("✅ 获取到 %d 条日志记录", len(*resp))
+	m.data = fmt.Sprintf("✅ 获取到 %d 条日志记录 (总 %d)", len(resp.Data), resp.Total)
 }
 
 type tickMsg time.Time

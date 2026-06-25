@@ -29,6 +29,10 @@ func (c *Client) GetSpendLogs(startDate, endDate string) (*api.SpendLogsResponse
 	return c.api.GetSpendLogs(startDate, endDate)
 }
 
+func (c *Client) GetSpendLogsUI(startDateTime, endDateTime string) (*api.SpendLogsUIResponse, error) {
+	return c.api.GetSpendLogsUI(startDateTime, endDateTime)
+}
+
 func (c *Client) GetModels() (*api.ModelsResponse, error) {
 	return c.api.GetModels()
 }
@@ -43,4 +47,16 @@ func (c *Client) GetAPIKey() string {
 
 func (c *Client) GetTeamAvailable() (*api.TeamAvailableResponse, error) {
 	return c.api.GetTeamAvailable()
+}
+
+func (c *Client) GetUserInfo() (*api.UserInfoResponse, error) {
+	return c.api.GetUserInfo()
+}
+
+func (c *Client) GetTeamList(userID string) (*api.TeamListResponse, error) {
+	return c.api.GetTeamList(userID)
+}
+
+func (c *Client) GetTeamInfo(teamID string) (*api.TeamInfoResponse, error) {
+	return c.api.GetTeamInfo(teamID)
 }
