@@ -178,19 +178,22 @@ type SpendLogsUIResponse struct {
 }
 
 type SpendLogEntry struct {
-	ID              string      `json:"id"`
-	APIKey          string      `json:"api_key"`
-	Model           string      `json:"model"`
-	Messages        []Message   `json:"messages,omitempty"`
-	Status          string      `json:"status"`
-	StartTime       string      `json:"startTime"`
-	EndTime         string      `json:"endTime"`
-	TotalSpend      float64     `json:"total_spend"`
-	PromptTokens    int64       `json:"prompt_tokens"`
-	CompletionTokens int64      `json:"completion_tokens"`
-	TotalTokens     int64       `json:"total_tokens"`
-	Latency         float64     `json:"latency,omitempty"`
-	ErrorMessage    string      `json:"error_message,omitempty"`
+	ID               string                 `json:"request_id"`
+	CallType         string                 `json:"call_type"`
+	APIKey           string                 `json:"api_key"`
+	Model            string                 `json:"model"`
+	Status           string                 `json:"status"`
+	StartTime        string                 `json:"startTime"`
+	EndTime          string                 `json:"endTime"`
+	TotalSpend       float64                `json:"spend"`
+	PromptTokens     int64                  `json:"prompt_tokens"`
+	CompletionTokens int64                  `json:"completion_tokens"`
+	TotalTokens      int64                  `json:"total_tokens"`
+	Latency          float64                `json:"latency,omitempty"`
+	ErrorMessage     string                 `json:"error_message,omitempty"`
+	Metadata         map[string]interface{} `json:"metadata,omitempty"`
+	RequestTags      []string               `json:"request_tags,omitempty"`
+	TeamID           string                 `json:"team_id,omitempty"`
 }
 
 type Message struct {
