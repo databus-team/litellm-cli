@@ -438,13 +438,16 @@ func printSpendLogs(resp *api.SpendLogsResponse, tick int, modelFilter string) {
 }
 
 // renderLogsTable 渲染日志表格 (用于 TUI 模式)
-func renderLogsTable(data []api.SpendLogEntry, total int) string {
+func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]bool) string {
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
 	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	yellowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
+	// 新记录高亮样式 (青色粗体)
+	newHighlightStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("51"))
+	newHighlightMutedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("36"))
 
 	padRight := func(s string, width int) string {
 		w := runewidth.StringWidth(s)
@@ -554,6 +557,9 @@ func renderLogsTable(data []api.SpendLogEntry, total int) string {
 	for _, entry := range data {
 		startTime := formatLocalTime(entry.StartTime)
 
+		// 判断是否是新记录
+		isNew := newLogIDs != nil && newLogIDs[entry.ID]
+
 		status := "✓"
 		if entry.Status != "success" && entry.ErrorMessage != "" {
 			status = "✗"
@@ -600,25 +606,44 @@ func renderLogsTable(data []api.SpendLogEntry, total int) string {
 			}
 		}
 
-		if entry.Status != "success" && entry.ErrorMessage != "" {
-			sb.WriteString(fmt.Sprintf("%s %s %s %s %s %s %s\n",
-				contentStyle.Render(padRight(startTime, colWidths.time)),
-				errorStyle.Render(padRight(status, colWidths.status)),
-				greenStyle.Render(padRight(spendStr, colWidths.spend)),
-				yellowStyle.Render(padRight(latencyStr, colWidths.latency)),
-				contentStyle.Render(padRight(tokensStr, colWidths.tokens)),
-				contentStyle.Render(padRight(model, colWidths.model)),
-				mutedStyle.Render(padRight(tag, colWidths.tags))))
+		// 判断样式
+		var timeStyle, statusStyle, spendStyle, latencyStyle, tokensStyle, modelStyle, tagStyle lipgloss.Style
+
+		if isNew {
+			// 新记录使用高亮样式
+			timeStyle = newHighlightStyle
+			statusStyle = newHighlightStyle
+			spendStyle = newHighlightStyle
+			latencyStyle = newHighlightStyle
+			tokensStyle = newHighlightStyle
+			modelStyle = newHighlightStyle
+			tagStyle = newHighlightMutedStyle
+		} else if entry.Status != "success" && entry.ErrorMessage != "" {
+			timeStyle = contentStyle
+			statusStyle = errorStyle
+			spendStyle = greenStyle
+			latencyStyle = yellowStyle
+			tokensStyle = contentStyle
+			modelStyle = contentStyle
+			tagStyle = mutedStyle
 		} else {
-			sb.WriteString(fmt.Sprintf("%s %s %s %s %s %s %s\n",
-				contentStyle.Render(padRight(startTime, colWidths.time)),
-				greenStyle.Render(padRight(status, colWidths.status)),
-				greenStyle.Render(padRight(spendStr, colWidths.spend)),
-				yellowStyle.Render(padRight(latencyStr, colWidths.latency)),
-				contentStyle.Render(padRight(tokensStr, colWidths.tokens)),
-				contentStyle.Render(padRight(model, colWidths.model)),
-				mutedStyle.Render(padRight(tag, colWidths.tags))))
+			timeStyle = contentStyle
+			statusStyle = greenStyle
+			spendStyle = greenStyle
+			latencyStyle = yellowStyle
+			tokensStyle = contentStyle
+			modelStyle = contentStyle
+			tagStyle = mutedStyle
 		}
+
+		sb.WriteString(fmt.Sprintf("%s %s %s %s %s %s %s\n",
+			timeStyle.Render(padRight(startTime, colWidths.time)),
+			statusStyle.Render(padRight(status, colWidths.status)),
+			spendStyle.Render(padRight(spendStr, colWidths.spend)),
+			latencyStyle.Render(padRight(latencyStr, colWidths.latency)),
+			tokensStyle.Render(padRight(tokensStr, colWidths.tokens)),
+			modelStyle.Render(padRight(model, colWidths.model)),
+			tagStyle.Render(padRight(tag, colWidths.tags))))
 	}
 
 	sb.WriteString(fmt.Sprintf("\n%s\n", mutedStyle.Render(fmt.Sprintf("共 %d 条记录 (总 %d)", len(data), total))))
@@ -627,7 +652,7 @@ func renderLogsTable(data []api.SpendLogEntry, total int) string {
 }
 
 // renderLogsTableOld 渲染旧版日志表格 (用于 TUI 模式回退)
-func renderLogsTableOld(resp *api.SpendLogsResponse, intervalVal int) string {
+func renderLogsTableOld(resp *api.SpendLogsResponse, intervalVal int, newLogIDs map[string]bool) string {
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
@@ -668,22 +693,26 @@ func renderLogsTableOld(resp *api.SpendLogsResponse, intervalVal int) string {
 
 // TUI 模式
 type logsModel struct {
-	client     *client.Client
-	data       string
-	interval   int
-	model      string
-	tick       int
-	quitting   bool
-	logData    *api.SpendLogsUIResponse
-	logDataOld *api.SpendLogsResponse
+	client      *client.Client
+	data        string
+	interval    int
+	model       string
+	tick        int
+	quitting    bool
+	logData     *api.SpendLogsUIResponse
+	logDataOld  *api.SpendLogsResponse
+	seenLogIDs  map[string]bool  // 已看到的日志ID
+	newLogIDs   map[string]bool // 本次新增的日志ID（用于高亮）
 }
 
 func NewLogsModel(c *client.Client, interval int, model string) *logsModel {
 	m := &logsModel{
-		client:   c,
-		interval: interval,
-		model:    model,
-		data:     "加载中...",
+		client:     c,
+		interval:   interval,
+		model:      model,
+		data:       "加载中...",
+		seenLogIDs: make(map[string]bool),
+		newLogIDs:  make(map[string]bool),
 	}
 	m.refresh()
 	return m
@@ -738,9 +767,9 @@ func (m *logsModel) View() string {
 			}
 			filteredData = filtered
 		}
-		content.WriteString(renderLogsTable(filteredData, int(m.logData.Total)))
+		content.WriteString(renderLogsTable(filteredData, int(m.logData.Total), m.newLogIDs))
 	} else if m.logDataOld != nil && len(*m.logDataOld) > 0 {
-		content.WriteString(renderLogsTableOld(m.logDataOld, m.interval))
+		content.WriteString(renderLogsTableOld(m.logDataOld, m.interval, m.newLogIDs))
 	} else {
 		content.WriteString("暂无数据")
 	}
@@ -755,6 +784,12 @@ func (m *logsModel) refresh() {
 	// 使用 datetime 格式，并 URL 编码空格
 	endDate := url.QueryEscape(time.Now().Format("2006-01-02 15:04:05"))
 	startDate := url.QueryEscape(time.Now().AddDate(0, 0, -1).Format("2006-01-02 15:04:05"))
+
+	// 记录本次刷新前已存在的日志ID
+	prevLogIDs := make(map[string]bool)
+	for id := range m.seenLogIDs {
+		prevLogIDs[id] = true
+	}
 
 	// 优先使用 /spend/logs/ui
 	resp, err := m.client.GetSpendLogsUI(startDate, endDate)
@@ -777,6 +812,22 @@ func (m *logsModel) refresh() {
 			return
 		}
 		m.data = fmt.Sprintf("✅ 获取到 %d 条日志记录", len(*respOld))
+
+		// 识别新增日志
+		m.newLogIDs = make(map[string]bool)
+		for _, entry := range *respOld {
+			var logID string
+			if id, ok := entry["request_id"]; ok {
+				logID, _ = id.(string)
+			}
+			if logID != "" && !m.seenLogIDs[logID] {
+				m.newLogIDs[logID] = true
+			}
+			if logID != "" {
+				m.seenLogIDs[logID] = true
+			}
+		}
+
 		m.logData = nil
 		m.logDataOld = respOld
 		return
@@ -790,6 +841,16 @@ func (m *logsModel) refresh() {
 	}
 
 	m.data = fmt.Sprintf("✅ 获取到 %d 条日志记录 (总 %d)", len(resp.Data), resp.Total)
+
+	// 识别新增日志
+	m.newLogIDs = make(map[string]bool)
+	for _, entry := range resp.Data {
+		if !m.seenLogIDs[entry.ID] {
+			m.newLogIDs[entry.ID] = true
+		}
+		m.seenLogIDs[entry.ID] = true
+	}
+
 	m.logData = resp
 	m.logDataOld = nil
 }
