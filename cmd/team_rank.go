@@ -3,11 +3,11 @@ package cmd
 import (
 	"fmt"
 	"log"
-	"math"
 	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 	"litellm-cli/internal/api"
 	"litellm-cli/internal/client"
@@ -76,9 +76,8 @@ func printTeamLeaderboard(team *api.UserTeam, currentUserID string) {
 	yellowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
 	cyanStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("51"))
 
-	// 使用 team_info 中的数据
+	// 使用实际聚合的用户用量作为团队总用量
 	teamAlias := team.TeamAlias
-	teamSpend := team.Spend
 
 	// 构建 user_id -> email 映射
 	userEmailMap := make(map[string]string)
@@ -92,6 +91,12 @@ func printTeamLeaderboard(team *api.UserTeam, currentUserID string) {
 		if k.UserID != "" {
 			userSpend[k.UserID] += k.Spend
 		}
+	}
+
+	// 计算团队总用量（使用实际聚合的用量）
+	var calculatedTeamSpend float64
+	for _, s := range userSpend {
+		calculatedTeamSpend += s
 	}
 
 	// 样式
@@ -114,8 +119,8 @@ func printTeamLeaderboard(team *api.UserTeam, currentUserID string) {
 			email = uid[:8] + "..."
 		}
 		percent := 0.0
-		if teamSpend > 0 {
-			percent = (spend / teamSpend) * 100
+		if calculatedTeamSpend > 0 {
+			percent = (spend / calculatedTeamSpend) * 100
 		}
 		ranks = append(ranks, userRank{
 			userID:  uid,
@@ -134,12 +139,38 @@ func printTeamLeaderboard(team *api.UserTeam, currentUserID string) {
 	fmt.Println()
 	fmt.Println(headerStyle.Render(fmt.Sprintf(" 🏆 %s 用量排行榜 ", teamAlias)))
 	fmt.Println()
-	fmt.Println(contentStyle.Render(fmt.Sprintf(" 团队总用量: %s", greenStyle.Render(fmt.Sprintf("$%.2f", teamSpend)))))
+	fmt.Println(contentStyle.Render(fmt.Sprintf(" 团队总用量: %s", greenStyle.Render(fmt.Sprintf("$%.2f", calculatedTeamSpend)))))
 	fmt.Println()
 
+	// 计算列宽（使用 runewidth 计算显示宽度）
+	rankColWidth := 4
+	emailColWidth := 30
+	spendColWidth := 11
+	percentColWidth := 8
+
+	// 辅助函数：用空格填充到指定显示宽度
+	padRight := func(s string, width int) string {
+		w := runewidth.StringWidth(s)
+		if w >= width {
+			return s
+		}
+		return s + strings.Repeat(" ", width-w)
+	}
+	padLeft := func(s string, width int) string {
+		w := runewidth.StringWidth(s)
+		if w >= width {
+			return s
+		}
+		return strings.Repeat(" ", width-w) + s
+	}
+
 	// 表头
-	fmt.Printf("  %-4s %-30s %-11s %-8s\n", "排名", "用户", "用量", "占比")
-	fmt.Println(mutedStyle.Render(" " + strings.Repeat("─", 60)))
+	fmt.Printf("  %s %s %s %s\n",
+		padRight("排名", rankColWidth),
+		padRight("用户", emailColWidth),
+		padLeft("用量", spendColWidth),
+		padLeft("占比", percentColWidth))
+	fmt.Println(mutedStyle.Render(" " + strings.Repeat("─", 65)))
 
 	// 找出当前用户排名
 	var myRank int
@@ -149,17 +180,18 @@ func printTeamLeaderboard(team *api.UserTeam, currentUserID string) {
 	for i, r := range ranks {
 		rank := i + 1
 		email := r.email
-		if len(email) > 28 {
-			email = email[:25] + "..."
+		// 使用 runewidth 处理中文字符宽度
+		emailWidth := runewidth.StringWidth(email)
+		if emailWidth > emailColWidth {
+			// 截断并添加省略号
+			email = runewidth.Truncate(email, emailColWidth-3, "...")
 		}
 
 		// 高亮当前用户
 		isMe := r.userID == currentUserID
-		style := contentStyle
 		rankStr := fmt.Sprintf("#%d", rank)
 
 		if isMe {
-			style = cyanStyle.Bold(true)
 			rankStr = "→" + fmt.Sprintf("%d", rank)
 			myRank = rank
 			mySpend = r.spend
@@ -169,16 +201,28 @@ func printTeamLeaderboard(team *api.UserTeam, currentUserID string) {
 		percentStr := fmt.Sprintf("%.1f%%", r.percent)
 		spendStr := fmt.Sprintf("$%.2f", r.spend)
 
-		// 手动对齐
-		spendStrPadded := spendStr + strings.Repeat(" ", int(math.Max(0, 10-float64(len(spendStr)))))
-		percentStrPadded := percentStr + strings.Repeat(" ", int(math.Max(0, 8-float64(len(percentStr)))))
+		// 使用 runewidth 精确对齐
+		rankPadded := padRight(rankStr, rankColWidth)
+		emailPadded := padRight(email, emailColWidth)
+		spendPadded := padLeft(spendStr, spendColWidth)
+		percentPadded := padLeft(percentStr, percentColWidth)
 
-		fmt.Printf(style.Render("  %-4s %-30s ")+"%s %s\n",
-			rankStr,
-			email,
-			greenStyle.Render(spendStrPadded),
-			yellowStyle.Render(percentStrPadded),
-		)
+		// 渲染带颜色的部分
+		if isMe {
+			fmt.Printf("  %s %s %s %s\n",
+				cyanStyle.Bold(true).Render(rankPadded),
+				emailPadded,
+				greenStyle.Render(spendPadded),
+				yellowStyle.Render(percentPadded),
+			)
+		} else {
+			fmt.Printf("  %s %s %s %s\n",
+				contentStyle.Render(rankPadded),
+				emailPadded,
+				greenStyle.Render(spendPadded),
+				yellowStyle.Render(percentPadded),
+			)
+		}
 	}
 
 	// 显示我的排名统计
@@ -189,7 +233,7 @@ func printTeamLeaderboard(team *api.UserTeam, currentUserID string) {
 	}
 
 	// 图示化
-	if len(ranks) > 0 && teamSpend > 0 {
+	if len(ranks) > 0 && calculatedTeamSpend > 0 {
 		fmt.Println()
 		fmt.Println(mutedStyle.Render(" 用量分布:"))
 		barWidth := 30
@@ -197,7 +241,7 @@ func printTeamLeaderboard(team *api.UserTeam, currentUserID string) {
 			if i >= 10 { // 只显示 top 10
 				break
 			}
-			barLen := int((r.spend / teamSpend) * float64(barWidth))
+			barLen := int((r.spend / calculatedTeamSpend) * float64(barWidth))
 			if barLen == 0 && r.spend > 0 {
 				barLen = 1
 			}
