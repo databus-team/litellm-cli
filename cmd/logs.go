@@ -23,7 +23,6 @@ import (
 var (
 	interval int
 	model    string
-	textMode bool
 )
 
 var logsCmd = &cobra.Command{
@@ -35,7 +34,6 @@ var logsCmd = &cobra.Command{
 func init() {
 	logsCmd.Flags().IntVarP(&interval, "interval", "i", 5, "刷新间隔 (秒)")
 	logsCmd.Flags().StringVarP(&model, "model", "m", "", "过滤模型")
-	logsCmd.Flags().BoolVarP(&textMode, "text", "t", false, "文本模式 (非交互环境)")
 	rootCmd.AddCommand(logsCmd)
 }
 
@@ -46,11 +44,6 @@ func runLogs(cmd *cobra.Command, args []string) {
 	}
 
 	c := client.New(cfg)
-
-	if textMode {
-		runLogsText(c, interval, model)
-		return
-	}
 
 	p := tea.NewProgram(
 		NewLogsModel(c, interval, model),
