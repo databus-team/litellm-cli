@@ -785,12 +785,6 @@ func (m *logsModel) refresh() {
 	endDate := url.QueryEscape(time.Now().Format("2006-01-02 15:04:05"))
 	startDate := url.QueryEscape(time.Now().AddDate(0, 0, -1).Format("2006-01-02 15:04:05"))
 
-	// 记录本次刷新前已存在的日志ID
-	prevLogIDs := make(map[string]bool)
-	for id := range m.seenLogIDs {
-		prevLogIDs[id] = true
-	}
-
 	// 优先使用 /spend/logs/ui
 	resp, err := m.client.GetSpendLogsUI(startDate, endDate)
 	if err != nil {
