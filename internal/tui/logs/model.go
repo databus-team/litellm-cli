@@ -810,15 +810,25 @@ func (m *Model) applyMarkdownScrollUnified(allLines []string, availableLines int
 	return sb.String()
 }
 
-func (m *Model) getSingleChoicePreview(singleChoice map[string]interface{}, mutedStyle, valueStyle lipgloss.Style) []string {
+func (m *Model) getSingleChoicePreview(singleChoice map[string]interface{}, mutedStyle, valueStyle lipgloss.Style, maxAvailLines int) []string {
 	var lines []string
 	if singleChoice == nil {
 		return lines
 	}
 
+	// 思考内容使用稍暗的颜色，与正文产生视觉层次
+	thinkingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+
+	// 预算：从可用行数中扣除固定行（finish_reason、标题等），剩余按比例分配思考/内容
+	budget := maxAvailLines
+	if budget < 4 {
+		budget = 4
+	}
+
 	// 1. 尝试获取 finish_reason
 	if fr, ok := singleChoice["finish_reason"].(string); ok && fr != "" {
 		lines = append(lines, mutedStyle.Render(fmt.Sprintf("  🏁 结束原因: %s", fr)))
+		budget--
 	}
 
 	// 2. 获取 message (同时兼容 delta 字段以完美支持流式输出预览)
@@ -830,17 +840,22 @@ func (m *Model) getSingleChoicePreview(singleChoice map[string]interface{}, mute
 	if msg == nil {
 		if text, ok := singleChoice["text"].(string); ok && text != "" {
 			text = strings.TrimSpace(text)
-			if len(text) <= 150 {
-				rendered := m.renderMarkdownFull(text)
-				for i, rl := range rendered {
-					if i == 0 {
-						lines = append(lines, "  💬 内容: "+rl)
-					} else {
-						lines = append(lines, "          "+rl)
-					}
+			rendered := m.renderMarkdownFull(text)
+			lines = append(lines, "  💬 内容:")
+			budget-- // 标题行
+			maxContent := budget
+			if maxContent < 1 {
+				maxContent = 1
+			}
+			if len(rendered) <= maxContent {
+				for _, rl := range rendered {
+					lines = append(lines, "    "+rl)
 				}
 			} else {
-				lines = append(lines, mutedStyle.Render(fmt.Sprintf("  💬 内容: %s... [长文本已折叠，按 Enter/Tab 切换 choices 查看全文]", truncate(text, 60))))
+				for i := 0; i < maxContent; i++ {
+					lines = append(lines, "    "+rendered[i])
+				}
+				lines = append(lines, mutedStyle.Render("    ... [长文本已折叠，按 Enter/Tab 切换 choices 查看全文]"))
 			}
 		}
 		return lines
@@ -855,34 +870,50 @@ func (m *Model) getSingleChoicePreview(singleChoice map[string]interface{}, mute
 		if thinking != "" {
 			thinking = strings.TrimSpace(thinking)
 			renderedThinking := m.renderMarkdownFull(thinking)
-			maxThinkingLines := 4 // 默认展示最多4行思考过程，充分利用空闲高度并支持按长度展示
-			
+
+			// 思考最多占预算的一半（保留空间给正文），且不超过 6 行
+			maxThinkingLines := budget / 2
+			if maxThinkingLines < 2 {
+				maxThinkingLines = 2
+			}
+			if maxThinkingLines > 6 {
+				maxThinkingLines = 6
+			}
+
 			lines = append(lines, mutedStyle.Render("  🧠 思考过程:"))
+			budget-- // 标题行
 			if len(renderedThinking) <= maxThinkingLines {
 				for _, rl := range renderedThinking {
-					lines = append(lines, "    "+rl)
+					lines = append(lines, thinkingStyle.Render("    "+rl))
+					budget--
 				}
 			} else {
 				for i := 0; i < maxThinkingLines; i++ {
-					lines = append(lines, "    "+renderedThinking[i])
+					lines = append(lines, thinkingStyle.Render("    "+renderedThinking[i]))
+					budget--
 				}
 				lines = append(lines, mutedStyle.Render("    ... [思考过程较长已折叠，按 Enter/Tab 切换 choices 查看完整思维链] ..."))
+				budget--
 			}
 		}
 
 		if cleanText != "" {
-			if len(cleanText) <= 150 {
-				// 使用 Markdown 渲染较短的内容，横向拉满并展现精美高亮
-				rendered := m.renderMarkdownFull(cleanText)
-				for i, rl := range rendered {
-					if i == 0 {
-						lines = append(lines, "  💬 内容: "+rl)
-					} else {
-						lines = append(lines, "          "+rl)
-					}
+			rendered := m.renderMarkdownFull(cleanText)
+			lines = append(lines, "  💬 内容:")
+			budget-- // 标题行
+			maxContent := budget
+			if maxContent < 1 {
+				maxContent = 1
+			}
+			if len(rendered) <= maxContent {
+				for _, rl := range rendered {
+					lines = append(lines, "    "+rl)
 				}
 			} else {
-				lines = append(lines, mutedStyle.Render(fmt.Sprintf("  💬 内容: %s... [长文本已折叠，按 Enter/Tab 切换 choices 查看全文]", truncate(cleanText, 60))))
+				for i := 0; i < maxContent; i++ {
+					lines = append(lines, "    "+rendered[i])
+				}
+				lines = append(lines, mutedStyle.Render("    ... [长文本已折叠，按 Enter/Tab 切换 choices 查看全文]"))
 			}
 		}
 	}
@@ -936,6 +967,7 @@ func (m *Model) getSingleChoicePreview(singleChoice map[string]interface{}, mute
 }
 
 func (m *Model) renderLastMessagePreview(proxyReq map[string]interface{}, mutedStyle lipgloss.Style) []string {
+
 	var lines []string
 	if proxyReq == nil {
 		return lines
@@ -1083,7 +1115,12 @@ func (m *Model) renderMainView(proxyReq, respData map[string]interface{}, cardSt
 			}
 		}
 		if singleChoice != nil {
-			previewLines := m.getSingleChoicePreview(singleChoice, mutedStyle, valueStyle)
+			// 宽屏时 response 占右半列，减去 header/border/usage/spend 等固定行后的可用行数
+			availForPreview := (m.height - 8) - 4
+			if availForPreview < 4 {
+				availForPreview = 4
+			}
+			previewLines := m.getSingleChoicePreview(singleChoice, mutedStyle, valueStyle, availForPreview)
 			rightCol = append(rightCol, previewLines...)
 		}
 
@@ -1200,7 +1237,12 @@ func (m *Model) renderMainView(proxyReq, respData map[string]interface{}, cardSt
 			}
 		}
 		if singleChoice != nil {
-			previewLines := m.getSingleChoicePreview(singleChoice, mutedStyle, valueStyle)
+			// 窄屏时两个卡片纵向排列，response 卡片约占下半屏，减去固定行后的可用行数
+			availForPreview := (m.height/2 - 6) - 4
+			if availForPreview < 4 {
+				availForPreview = 4
+			}
+			previewLines := m.getSingleChoicePreview(singleChoice, mutedStyle, valueStyle, availForPreview)
 			responseLines = append(responseLines, previewLines...)
 		}
 
