@@ -184,7 +184,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					maxItems := m.getTabItemCount(m.detailState.activeTab)
 					if maxItems > 0 {
-						m.detailState.selectedItem = (m.detailState.selectedItem + 1) % maxItems
+						m.detailState.selectedItem = min(maxItems-1, m.detailState.selectedItem+1)
 					}
 				}
 			}
@@ -196,7 +196,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					maxItems := m.getTabItemCount(m.detailState.activeTab)
 					if maxItems > 0 {
-						m.detailState.selectedItem = (m.detailState.selectedItem - 1 + maxItems) % maxItems
+						m.detailState.selectedItem = max(0, m.detailState.selectedItem-1)
 					}
 				}
 			} else if m.viewMode == "list" {
@@ -209,7 +209,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					maxItems := m.getTabItemCount(m.detailState.activeTab)
 					if maxItems > 0 {
-						m.detailState.selectedItem = (m.detailState.selectedItem - 1 + maxItems) % maxItems
+						m.detailState.selectedItem = max(0, m.detailState.selectedItem-1)
 					}
 				}
 			}
@@ -221,7 +221,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					maxItems := m.getTabItemCount(m.detailState.activeTab)
 					if maxItems > 0 {
-						m.detailState.selectedItem = (m.detailState.selectedItem + 1) % maxItems
+						m.detailState.selectedItem = min(maxItems-1, m.detailState.selectedItem+1)
 					}
 				}
 			} else if m.viewMode == "list" {
@@ -240,7 +240,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					maxItems := m.getTabItemCount(m.detailState.activeTab)
 					if maxItems > 0 {
-						m.detailState.selectedItem = (m.detailState.selectedItem + 1) % maxItems
+						m.detailState.selectedItem = min(maxItems-1, m.detailState.selectedItem+1)
 					}
 				}
 			}
@@ -615,11 +615,16 @@ func (m *Model) applyMarkdownScrollUnified(allLines []string, availableLines int
 
 	scrollOffset := m.detailState.markdownScrollOffset
 
-	if scrollOffset >= contentLineCount {
-		scrollOffset = contentLineCount - 1
-		if scrollOffset < 0 {
-			scrollOffset = 0
-		}
+	// 动态滚动限位算法：当尾部已完全可见时，锁定 scrollOffset 不再增加，彻底杜绝尾部留白
+	maxScroll := contentLineCount - contentAvailable
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scrollOffset > maxScroll {
+		scrollOffset = maxScroll
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
 	}
 
 	contentEndIdx := scrollOffset + contentAvailable
@@ -659,6 +664,90 @@ func (m *Model) applyMarkdownScrollUnified(allLines []string, availableLines int
 	}
 
 	return sb.String()
+}
+
+func (m *Model) getSingleChoicePreview(singleChoice map[string]interface{}, mutedStyle, valueStyle lipgloss.Style) []string {
+	var lines []string
+	if singleChoice == nil {
+		return lines
+	}
+
+	// 1. 尝试获取 finish_reason
+	if fr, ok := singleChoice["finish_reason"].(string); ok && fr != "" {
+		lines = append(lines, mutedStyle.Render(fmt.Sprintf("  🏁 结束原因: %s", fr)))
+	}
+
+	// 2. 获取 message
+	msg, _ := singleChoice["message"].(map[string]interface{})
+	if msg == nil {
+		if text, ok := singleChoice["text"].(string); ok && text != "" {
+			text = strings.TrimSpace(text)
+			if len(text) <= 150 {
+				lines = append(lines, fmt.Sprintf("  💬 内容: %s", text))
+			} else {
+				lines = append(lines, mutedStyle.Render(fmt.Sprintf("  💬 内容: %s... [长文本已折叠，按 Enter/Tab 切换 choices 查看全文]", truncate(text, 60))))
+			}
+		}
+		return lines
+	}
+
+	// 3. 提取 content (使用我们之前强大的 extractMessagePreview)
+	content := extractMessagePreview(msg)
+	if content != "" {
+		content = strings.TrimSpace(content)
+		if len(content) <= 150 {
+			lines = append(lines, fmt.Sprintf("  💬 内容: %s", content))
+		} else {
+			lines = append(lines, mutedStyle.Render(fmt.Sprintf("  💬 内容: %s... [长文本已折叠，按 Enter/Tab 切换 choices 查看全文]", truncate(content, 60))))
+		}
+	}
+
+	// 4. 提取 tool_calls 并格式化为对人类极度友好的条目预览
+	toolCalls, _ := msg["tool_calls"].([]interface{})
+	if len(toolCalls) > 0 {
+		lines = append(lines, "  🔧 工具调用:")
+		for _, tc := range toolCalls {
+			if tcMap, ok := tc.(map[string]interface{}); ok {
+				var name string
+				var argumentsStr string
+				if fn, ok := tcMap["function"].(map[string]interface{}); ok {
+					name, _ = fn["name"].(string)
+					argumentsStr, _ = fn["arguments"].(string)
+				}
+				if name == "" {
+					name, _ = tcMap["name"].(string)
+				}
+
+				// 精美解析 arguments key-value
+				previewArgs := ""
+				if argumentsStr != "" {
+					var argsMap map[string]interface{}
+					if err := json.Unmarshal([]byte(argumentsStr), &argsMap); err == nil {
+						var keys []string
+						for k := range argsMap {
+							keys = append(keys, k)
+						}
+						sort.Strings(keys)
+						var parts []string
+						for _, k := range keys {
+							valStr := fmt.Sprintf("%v", argsMap[k])
+							if len(valStr) > 15 {
+								valStr = valStr[:12] + "..."
+							}
+							parts = append(parts, fmt.Sprintf("%s=%s", k, valStr))
+						}
+						previewArgs = strings.Join(parts, ", ")
+					} else {
+						previewArgs = truncate(argumentsStr, 30)
+					}
+				}
+
+				lines = append(lines, valueStyle.Render(fmt.Sprintf("    - %s(%s)", name, previewArgs)))
+			}
+		}
+	}
+
+	return lines
 }
 
 func (m *Model) renderMainView(proxyReq, respData map[string]interface{}, cardStyle, focusedCardStyle, contentStyle, mutedStyle, groupStyle, valueStyle, keyStyle, infoStyle, successStyle lipgloss.Style) []string {
@@ -761,6 +850,18 @@ func (m *Model) renderMainView(proxyReq, respData map[string]interface{}, cardSt
 			}
 		}
 
+		// Choices 只有一个时的上提与工具参数智能预览
+		var singleChoice map[string]interface{}
+		if respData != nil {
+			if choices, ok := respData["choices"].([]interface{}); ok && len(choices) == 1 {
+				singleChoice, _ = choices[0].(map[string]interface{})
+			}
+		}
+		if singleChoice != nil {
+			previewLines := m.getSingleChoicePreview(singleChoice, mutedStyle, valueStyle)
+			rightCol = append(rightCol, previewLines...)
+		}
+
 		if respData != nil {
 			if usage, ok := respData["usage"].(map[string]interface{}); ok {
 				var pt, ct, tt float64
@@ -778,7 +879,6 @@ func (m *Model) renderMainView(proxyReq, respData map[string]interface{}, cardSt
 				}
 			}
 		}
-		rightCol = append(rightCol, fmt.Sprintf("  💬 choices: %d", choicesCount))
 
 		if m.selectedEntry != nil && m.selectedEntry.TotalSpend > 0 {
 			rightCol = append(rightCol, fmt.Sprintf("  💰 $%.4f", m.selectedEntry.TotalSpend))
@@ -864,6 +964,19 @@ func (m *Model) renderMainView(proxyReq, respData map[string]interface{}, cardSt
 				responseLines = append(responseLines, mutedStyle.Render("  💬 choices [无]"))
 			}
 		}
+
+		// Choices 只有一个时的上提与工具参数智能预览
+		var singleChoice map[string]interface{}
+		if respData != nil {
+			if choices, ok := respData["choices"].([]interface{}); ok && len(choices) == 1 {
+				singleChoice, _ = choices[0].(map[string]interface{})
+			}
+		}
+		if singleChoice != nil {
+			previewLines := m.getSingleChoicePreview(singleChoice, mutedStyle, valueStyle)
+			responseLines = append(responseLines, previewLines...)
+		}
+
 		if respData != nil {
 			if usage, ok := respData["usage"].(map[string]interface{}); ok {
 				var pt, ct, tt float64
@@ -1143,12 +1256,29 @@ func (m *Model) renderMessageSummary(msg interface{}, idx int, contentStyle, mut
 	previewContent = strings.ReplaceAll(previewContent, "\n", " ")
 	previewContent = strings.ReplaceAll(previewContent, "\r", "")
 
-	summary := roleIcon + " " + role
+	// 角色高亮特异化展示
+	roleColors := map[string]string{
+		"system":    "208", // 橙色
+		"user":      "76",  // 绿色
+		"assistant": "135", // 紫色
+		"tool":      "75",  // 蓝色
+	}
+	colorCode := roleColors[role]
+	if colorCode == "" {
+		colorCode = "86"
+	}
+	roleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorCode))
+	if focused {
+		roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("86"))
+	}
+	rolePart := roleStyle.Render(role)
+
+	summary := roleIcon + " " + rolePart
 	if previewContent != "" {
-		summary += ": " + truncate(previewContent, previewLen)
+		summary += ": " + style.Render(truncate(previewContent, previewLen))
 	}
 
-	return []string{style.Render(fmt.Sprintf("%s[%d] %s", prefix, idx, summary))}
+	return []string{fmt.Sprintf("%s[%d] %s", style.Render(prefix), idx, summary)}
 }
 
 func (m *Model) renderMessageItem(msg interface{}, idx int, contentStyle, mutedStyle, groupStyle, valueStyle lipgloss.Style) []string {
@@ -1300,7 +1430,7 @@ func (m *Model) renderToolSummary(tool interface{}, idx int, contentStyle, muted
 		}
 	}
 
-	// 4. 如果最后什么都没读到，直接使用简短的 JSON 作为摘要以防空白
+	// 4. 如果最后什么都没读到，直接使用简短 of JSON 作为摘要以防空白
 	if name == "" && desc == "" {
 		if jsonBytes, err := json.Marshal(toolMap); err == nil {
 			name = string(jsonBytes)
@@ -1322,12 +1452,21 @@ func (m *Model) renderToolSummary(tool interface{}, idx int, contentStyle, muted
 	desc = strings.ReplaceAll(desc, "\n", " ")
 	desc = strings.ReplaceAll(desc, "\r", "")
 
-	summary := fmt.Sprintf("🔧 %s", name)
+	// 特异化展示：聚焦时反显，非聚焦时展现醒目的青色粗体
+	nameStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
+	if focused {
+		nameStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("86"))
+	}
+	namePart := nameStyle.Render(name)
+
+	var summary string
 	if desc != "" {
-		summary += ": " + truncate(desc, previewLen)
+		summary = fmt.Sprintf("🔧 %s: %s", namePart, style.Render(truncate(desc, previewLen)))
+	} else {
+		summary = fmt.Sprintf("🔧 %s", namePart)
 	}
 
-	return []string{style.Render(fmt.Sprintf("%s[%d] %s", prefix, idx, summary))}
+	return []string{fmt.Sprintf("%s[%d] %s", style.Render(prefix), idx, summary)}
 }
 
 func (m *Model) renderSystemSummary(sys interface{}, idx int, contentStyle, mutedStyle lipgloss.Style, focused bool) []string {
@@ -1357,12 +1496,18 @@ func (m *Model) renderSystemSummary(sys interface{}, idx int, contentStyle, mute
 	text = strings.ReplaceAll(text, "\n", " ")
 	text = strings.ReplaceAll(text, "\r", "")
 
-	summary := fmt.Sprintf("system[%d] (%s)", idx, sysType)
+	typeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("172")) // 浅棕色
+	if focused {
+		typeStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("86"))
+	}
+	typePart := typeStyle.Render(sysType)
+
+	summary := fmt.Sprintf("system[%d] (%s)", idx, typePart)
 	if text != "" {
-		summary += ": " + truncate(text, previewLen)
+		summary += ": " + style.Render(truncate(text, previewLen))
 	}
 
-	return []string{style.Render(prefix + summary)}
+	return []string{fmt.Sprintf("%s%s", style.Render(prefix), summary)}
 }
 
 func (m *Model) renderSystemItem(sys interface{}, idx int, contentStyle, mutedStyle, groupStyle, valueStyle lipgloss.Style) []string {
