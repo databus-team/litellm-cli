@@ -132,7 +132,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "esc":
 			if m.viewMode == "detail" && m.detailState != nil {
-				if m.detailState.activeTab == "system" && m.detailState.itemDetailMode {
+				if m.detailState.itemDetailMode {
 					m.detailState.itemDetailMode = false
 					m.detailState.markdownScrollOffset = 0
 				} else if m.detailState.activeTab != "main" {
@@ -168,16 +168,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.detailState.scrollOffset = 0
 					m.detailState.itemDetailMode = false
 					m.detailState.currentItemIndex = 0
-				} else if m.detailState.activeTab == "system" {
+				} else if m.detailState.activeTab != "main" {
 					if !m.detailState.itemDetailMode {
 						m.detailState.itemDetailMode = true
 						m.detailState.currentItemIndex = m.detailState.selectedItem
 						m.detailState.markdownScrollOffset = 0
 					}
-				} else {
-					tab := m.detailState.activeTab
-					key := fmt.Sprintf("%s_%d", tab, m.detailState.selectedItem)
-					m.detailState.expandedSections[key] = !m.detailState.expandedSections[key]
 				}
 			}
 			return m, nil
@@ -194,10 +190,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "up", "k", "ctrl+p":
-			if m.viewMode == "detail" && m.detailState != nil && m.detailState.activeTab == "system" {
-				if m.detailState.itemDetailMode && m.detailState.markdownViewMode == "rendered" {
+			if m.viewMode == "detail" && m.detailState != nil && m.detailState.activeTab != "main" {
+				if m.detailState.itemDetailMode {
 					m.detailState.markdownScrollOffset = max(0, m.detailState.markdownScrollOffset-3)
-				} else if !m.detailState.itemDetailMode {
+				} else {
 					maxItems := m.getTabItemCount(m.detailState.activeTab)
 					if maxItems > 0 {
 						m.detailState.selectedItem = (m.detailState.selectedItem - 1 + maxItems) % maxItems
@@ -219,10 +215,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "down", "j", "ctrl+n":
-			if m.viewMode == "detail" && m.detailState != nil && m.detailState.activeTab == "system" {
-				if m.detailState.itemDetailMode && m.detailState.markdownViewMode == "rendered" {
+			if m.viewMode == "detail" && m.detailState != nil && m.detailState.activeTab != "main" {
+				if m.detailState.itemDetailMode {
 					m.detailState.markdownScrollOffset++
-				} else if !m.detailState.itemDetailMode {
+				} else {
 					maxItems := m.getTabItemCount(m.detailState.activeTab)
 					if maxItems > 0 {
 						m.detailState.selectedItem = (m.detailState.selectedItem + 1) % maxItems
@@ -463,16 +459,14 @@ func (m *Model) renderDetailView() string {
 	var header *components.Header
 	if m.detailState.activeTab == "main" {
 		header = components.NewHeader("日志详情", "ESC 返回 | ↑↓ 切换 | Tab 切换 | Enter 进入")
-	} else if m.detailState.activeTab == "system" {
-		if m.detailState.itemDetailMode {
-			modeHint := "Raw"
-			if m.detailState.markdownViewMode == "rendered" {
-				modeHint = "Rendered"
-			}
-			header = components.NewHeader(fmt.Sprintf("日志详情 > System[%d] (%s)", m.detailState.currentItemIndex, modeHint), "ESC 返回列表 | ↑↓ 滚动 | 空格 切换")
-		} else {
-			header = components.NewHeader("日志详情 > System", "ESC 返回 | ↑↓ 切换 | Enter 查看详情")
-		}
+	} else if m.detailState.itemDetailMode {
+		tabName := map[string]string{
+			"system":   "System",
+			"tools":    "Tool",
+			"messages": "Message",
+			"choices":  "Choice",
+		}[m.detailState.activeTab]
+		header = components.NewHeader(fmt.Sprintf("日志详情 > %s[%d]", tabName, m.detailState.currentItemIndex), "ESC 返回列表 | ↑↓ 滚动")
 	} else {
 		tabTitle := map[string]string{
 			"system":   "System Messages",
@@ -480,7 +474,7 @@ func (m *Model) renderDetailView() string {
 			"messages": "Messages",
 			"choices":  "Choices",
 		}[m.detailState.activeTab]
-		header = components.NewHeader(fmt.Sprintf("日志详情 > %s", tabTitle), "ESC 返回 | ↑↓ 选择 | Enter 展开")
+		header = components.NewHeader(fmt.Sprintf("日志详情 > %s", tabTitle), "ESC 返回 | ↑↓ 选择 | Enter 查看详情")
 	}
 	lines = append(lines, header.View(m.width))
 	lines = append(lines, "")
@@ -510,32 +504,22 @@ func (m *Model) renderDetailView() string {
 	// 底部提示
 	lines = append(lines, "")
 	var help *components.Help
-	if m.detailState.activeTab == "system" {
-		if m.detailState.itemDetailMode {
-			help = components.NewHelp([]components.HelpKey{
-				{Key: "↑↓", Desc: "滚动"},
-				{Key: "空格", Desc: "切换 Raw/Rendered"},
-				{Key: "ESC", Desc: "返回列表"},
-			})
-		} else {
-			help = components.NewHelp([]components.HelpKey{
-				{Key: "↑↓", Desc: "切换"},
-				{Key: "Enter", Desc: "查看详情"},
-				{Key: "ESC", Desc: "返回"},
-			})
-		}
+	if m.detailState.itemDetailMode {
+		help = components.NewHelp([]components.HelpKey{
+			{Key: "↑↓", Desc: "滚动查看"},
+			{Key: "ESC", Desc: "返回列表"},
+		})
 	} else {
 		help = components.NewHelp([]components.HelpKey{
 			{Key: "↑↓", Desc: "切换"},
-			{Key: "Tab", Desc: "切换"},
-			{Key: "Enter", Desc: "进入"},
+			{Key: "Enter", Desc: "查看详情"},
 			{Key: "ESC", Desc: "返回"},
 		})
 	}
 	lines = append(lines, help.View(m.width))
 
-	// System 详情模式：统一滚动处理
-	if m.detailState.activeTab == "system" && m.detailState.itemDetailMode {
+	// 统一滚动处理：任何 tab 在单项展开详情模式下都按物理行处理滚动
+	if m.detailState.itemDetailMode {
 		// 计算可见区域：总高度 - 头部(1行) - 空行 - 底部提示(2行)
 		availableLines := m.height - 4
 		return m.applyMarkdownScrollUnified(lines, availableLines)
@@ -959,14 +943,21 @@ func (m *Model) renderArrayDetailView(proxyReq, respData map[string]interface{},
 					m.detailState.selectedItem = 0
 				}
 
-				for i := 0; i < len(messages); i++ {
-					if i == selectedIdx {
-						m.detailState.selectedStartLine = len(lines) + 2
-						itemLines := m.renderMessageItem(messages[i], i, contentStyle, mutedStyle, groupStyle, valueStyle)
-						lines = append(lines, itemLines...)
-						m.detailState.selectedEndLine = len(lines) + 2
-					} else {
-						lines = append(lines, m.renderMessageSummary(messages[i], i, contentStyle, mutedStyle)...)
+				if m.detailState.itemDetailMode {
+					idx := m.detailState.currentItemIndex
+					if idx >= 0 && idx < len(messages) {
+						lines = append(lines, m.renderMessageItem(messages[idx], idx, contentStyle, mutedStyle, groupStyle, valueStyle)...)
+					}
+				} else {
+					for i := 0; i < len(messages); i++ {
+						if i == selectedIdx {
+							m.detailState.selectedStartLine = len(lines) + 2
+							itemLines := m.renderMessageSummary(messages[i], i, contentStyle, mutedStyle, true)
+							lines = append(lines, itemLines...)
+							m.detailState.selectedEndLine = len(lines) + 2
+						} else {
+							lines = append(lines, m.renderMessageSummary(messages[i], i, contentStyle, mutedStyle, false)...)
+						}
 					}
 				}
 			}
@@ -980,18 +971,25 @@ func (m *Model) renderArrayDetailView(proxyReq, respData map[string]interface{},
 					m.detailState.selectedItem = 0
 				}
 
-				for i := 0; i < len(tools) && i < 20; i++ {
-					if i == selectedIdx {
-						m.detailState.selectedStartLine = len(lines) + 2
-						itemLines := m.renderToolItem(tools[i], i, contentStyle, mutedStyle, groupStyle, valueStyle)
-						lines = append(lines, itemLines...)
-						m.detailState.selectedEndLine = len(lines) + 2
-					} else {
-						lines = append(lines, m.renderToolSummary(tools[i], i, contentStyle, mutedStyle)...)
+				if m.detailState.itemDetailMode {
+					idx := m.detailState.currentItemIndex
+					if idx >= 0 && idx < len(tools) {
+						lines = append(lines, m.renderToolItem(tools[idx], idx, contentStyle, mutedStyle, groupStyle, valueStyle)...)
 					}
-				}
-				if len(tools) > 20 {
-					lines = append(lines, mutedStyle.Render(fmt.Sprintf("  ... 还有 %d 个", len(tools)-20)))
+				} else {
+					for i := 0; i < len(tools) && i < 20; i++ {
+						if i == selectedIdx {
+							m.detailState.selectedStartLine = len(lines) + 2
+							itemLines := m.renderToolSummary(tools[i], i, contentStyle, mutedStyle, true)
+							lines = append(lines, itemLines...)
+							m.detailState.selectedEndLine = len(lines) + 2
+						} else {
+							lines = append(lines, m.renderToolSummary(tools[i], i, contentStyle, mutedStyle, false)...)
+						}
+					}
+					if len(tools) > 20 {
+						lines = append(lines, mutedStyle.Render(fmt.Sprintf("  ... 还有 %d 个", len(tools)-20)))
+					}
 				}
 			}
 		}
@@ -1004,18 +1002,25 @@ func (m *Model) renderArrayDetailView(proxyReq, respData map[string]interface{},
 					m.detailState.selectedItem = 0
 				}
 
-				for i := 0; i < len(choices) && i < 10; i++ {
-					if i == selectedIdx {
-						m.detailState.selectedStartLine = len(lines) + 2
-						itemLines := m.renderChoiceItem(choices[i], i, contentStyle, mutedStyle, groupStyle, valueStyle)
-						lines = append(lines, itemLines...)
-						m.detailState.selectedEndLine = len(lines) + 2
-					} else {
-						lines = append(lines, m.renderChoiceSummary(choices[i], i, contentStyle, mutedStyle)...)
+				if m.detailState.itemDetailMode {
+					idx := m.detailState.currentItemIndex
+					if idx >= 0 && idx < len(choices) {
+						lines = append(lines, m.renderChoiceItem(choices[idx], idx, contentStyle, mutedStyle, groupStyle, valueStyle)...)
 					}
-				}
-				if len(choices) > 10 {
-					lines = append(lines, mutedStyle.Render(fmt.Sprintf("  ... 还有 %d 个", len(choices)-10)))
+				} else {
+					for i := 0; i < len(choices) && i < 10; i++ {
+						if i == selectedIdx {
+							m.detailState.selectedStartLine = len(lines) + 2
+							itemLines := m.renderChoiceSummary(choices[i], i, contentStyle, mutedStyle, true)
+							lines = append(lines, itemLines...)
+							m.detailState.selectedEndLine = len(lines) + 2
+						} else {
+							lines = append(lines, m.renderChoiceSummary(choices[i], i, contentStyle, mutedStyle, false)...)
+						}
+					}
+					if len(choices) > 10 {
+						lines = append(lines, mutedStyle.Render(fmt.Sprintf("  ... 还有 %d 个", len(choices)-10)))
+					}
 				}
 			}
 		}
@@ -1028,7 +1033,7 @@ func (m *Model) renderArrayDetailView(proxyReq, respData map[string]interface{},
 	return lines
 }
 
-func (m *Model) renderMessageSummary(msg interface{}, idx int, contentStyle, mutedStyle lipgloss.Style) []string {
+func (m *Model) renderMessageSummary(msg interface{}, idx int, contentStyle, mutedStyle lipgloss.Style, focused bool) []string {
 	msgMap, ok := msg.(map[string]interface{})
 	if !ok {
 		if jsonBytes, err := json.Marshal(msg); err == nil {
@@ -1051,6 +1056,13 @@ func (m *Model) renderMessageSummary(msg interface{}, idx int, contentStyle, mut
 		roleIcon = "💬"
 	}
 
+	prefix := "  "
+	style := mutedStyle
+	if focused {
+		prefix = "▶ "
+		style = contentStyle.Bold(true)
+	}
+
 	summary := roleIcon + " " + role
 	if content != "" {
 		summary += ": " + truncate(content, 50)
@@ -1059,7 +1071,7 @@ func (m *Model) renderMessageSummary(msg interface{}, idx int, contentStyle, mut
 		summary += fmt.Sprintf(" [+%d tool_calls]", len(toolCalls))
 	}
 
-	return []string{mutedStyle.Render(fmt.Sprintf("  [%d] %s", idx, summary))}
+	return []string{style.Render(fmt.Sprintf("%s[%d] %s", prefix, idx, summary))}
 }
 
 func (m *Model) renderMessageItem(msg interface{}, idx int, contentStyle, mutedStyle, groupStyle, valueStyle lipgloss.Style) []string {
@@ -1120,7 +1132,7 @@ func (m *Model) renderMessageItem(msg interface{}, idx int, contentStyle, mutedS
 	return lines
 }
 
-func (m *Model) renderToolSummary(tool interface{}, idx int, contentStyle, mutedStyle lipgloss.Style) []string {
+func (m *Model) renderToolSummary(tool interface{}, idx int, contentStyle, mutedStyle lipgloss.Style, focused bool) []string {
 	toolMap, ok := tool.(map[string]interface{})
 	if !ok {
 		if jsonBytes, err := json.Marshal(tool); err == nil {
@@ -1138,7 +1150,7 @@ func (m *Model) renderToolSummary(tool interface{}, idx int, contentStyle, muted
 		desc = truncate(d, 40)
 	}
 
-	// 2. 尝试从嵌套的 function 字段读取并覆盖
+	// 2. 尝试从嵌套 of function 字段读取并覆盖
 	if fn, ok := toolMap["function"].(map[string]interface{}); ok {
 		if n, ok := fn["name"].(string); ok {
 			name = n
@@ -1164,12 +1176,19 @@ func (m *Model) renderToolSummary(tool interface{}, idx int, contentStyle, muted
 		}
 	}
 
+	prefix := "  "
+	style := mutedStyle
+	if focused {
+		prefix = "▶ "
+		style = contentStyle.Bold(true)
+	}
+
 	summary := fmt.Sprintf("🔧 %s", name)
 	if desc != "" {
 		summary += ": " + desc
 	}
 
-	return []string{mutedStyle.Render(fmt.Sprintf("  [%d] %s", idx, summary))}
+	return []string{style.Render(fmt.Sprintf("%s[%d] %s", prefix, idx, summary))}
 }
 
 func (m *Model) renderSystemSummary(sys interface{}, idx int, contentStyle, mutedStyle lipgloss.Style, focused bool) []string {
@@ -1583,7 +1602,7 @@ func (m *Model) renderToolItem(tool interface{}, idx int, contentStyle, mutedSty
 	return lines
 }
 
-func (m *Model) renderChoiceSummary(choice interface{}, idx int, contentStyle, mutedStyle lipgloss.Style) []string {
+func (m *Model) renderChoiceSummary(choice interface{}, idx int, contentStyle, mutedStyle lipgloss.Style, focused bool) []string {
 	c, ok := choice.(map[string]interface{})
 	if !ok {
 		return []string{mutedStyle.Render(fmt.Sprintf("  [%d] 无效数据", idx))}
@@ -1594,12 +1613,19 @@ func (m *Model) renderChoiceSummary(choice interface{}, idx int, contentStyle, m
 		finishReason = fr
 	}
 
+	prefix := "  "
+	style := mutedStyle
+	if focused {
+		prefix = "▶ "
+		style = contentStyle.Bold(true)
+	}
+
 	summary := fmt.Sprintf("💬 choice[%d]", idx)
 	if finishReason != "" {
 		summary += fmt.Sprintf(" (%s)", finishReason)
 	}
 
-	return []string{mutedStyle.Render("  " + summary)}
+	return []string{style.Render(prefix + summary)}
 }
 
 func (m *Model) renderChoiceItem(choice interface{}, idx int, contentStyle, mutedStyle, groupStyle, valueStyle lipgloss.Style) []string {
