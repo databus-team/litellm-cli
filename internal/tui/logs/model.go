@@ -977,7 +977,7 @@ func (m *Model) renderArrayDetailView(proxyReq, respData map[string]interface{},
 						lines = append(lines, m.renderToolItem(tools[idx], idx, contentStyle, mutedStyle, groupStyle, valueStyle)...)
 					}
 				} else {
-					for i := 0; i < len(tools) && i < 20; i++ {
+					for i := 0; i < len(tools); i++ {
 						if i == selectedIdx {
 							m.detailState.selectedStartLine = len(lines) + 2
 							itemLines := m.renderToolSummary(tools[i], i, contentStyle, mutedStyle, true)
@@ -986,9 +986,6 @@ func (m *Model) renderArrayDetailView(proxyReq, respData map[string]interface{},
 						} else {
 							lines = append(lines, m.renderToolSummary(tools[i], i, contentStyle, mutedStyle, false)...)
 						}
-					}
-					if len(tools) > 20 {
-						lines = append(lines, mutedStyle.Render(fmt.Sprintf("  ... 还有 %d 个", len(tools)-20)))
 					}
 				}
 			}
@@ -1008,7 +1005,7 @@ func (m *Model) renderArrayDetailView(proxyReq, respData map[string]interface{},
 						lines = append(lines, m.renderChoiceItem(choices[idx], idx, contentStyle, mutedStyle, groupStyle, valueStyle)...)
 					}
 				} else {
-					for i := 0; i < len(choices) && i < 10; i++ {
+					for i := 0; i < len(choices); i++ {
 						if i == selectedIdx {
 							m.detailState.selectedStartLine = len(lines) + 2
 							itemLines := m.renderChoiceSummary(choices[i], i, contentStyle, mutedStyle, true)
@@ -1017,9 +1014,6 @@ func (m *Model) renderArrayDetailView(proxyReq, respData map[string]interface{},
 						} else {
 							lines = append(lines, m.renderChoiceSummary(choices[i], i, contentStyle, mutedStyle, false)...)
 						}
-					}
-					if len(choices) > 10 {
-						lines = append(lines, mutedStyle.Render(fmt.Sprintf("  ... 还有 %d 个", len(choices)-10)))
 					}
 				}
 			}
@@ -1033,6 +1027,85 @@ func (m *Model) renderArrayDetailView(proxyReq, respData map[string]interface{},
 	return lines
 }
 
+func extractMessagePreview(msg interface{}) string {
+	if msg == nil {
+		return ""
+	}
+	if s, ok := msg.(string); ok {
+		return s
+	}
+	msgMap, ok := msg.(map[string]interface{})
+	if !ok {
+		if jsonBytes, err := json.Marshal(msg); err == nil {
+			return string(jsonBytes)
+		}
+		return ""
+	}
+
+	contentRaw := msgMap["content"]
+	if contentRaw != nil {
+		if s, ok := contentRaw.(string); ok && s != "" {
+			return s
+		}
+		if list, ok := contentRaw.([]interface{}); ok {
+			var parts []string
+			for _, item := range list {
+				if itemMap, ok := item.(map[string]interface{}); ok {
+					itemType, _ := itemMap["type"].(string)
+					if text, ok := itemMap["text"].(string); ok && text != "" {
+						parts = append(parts, text)
+					} else if itemType == "tool_use" {
+						name, _ := itemMap["name"].(string)
+						parts = append(parts, fmt.Sprintf("[Tool Call: %s]", name))
+					} else if itemType == "image" {
+						parts = append(parts, "[Image]")
+					}
+				} else if s, ok := item.(string); ok {
+					parts = append(parts, s)
+				}
+			}
+			if len(parts) > 0 {
+				return strings.Join(parts, " ")
+			}
+		}
+		if cMap, ok := contentRaw.(map[string]interface{}); ok {
+			if text, ok := cMap["text"].(string); ok {
+				return text
+			}
+		}
+	}
+
+	if toolCallsRaw, ok := msgMap["tool_calls"].([]interface{}); ok && len(toolCallsRaw) > 0 {
+		var toolNames []string
+		for _, tc := range toolCallsRaw {
+			if tcMap, ok := tc.(map[string]interface{}); ok {
+				if fn, ok := tcMap["function"].(map[string]interface{}); ok {
+					if name, ok := fn["name"].(string); ok {
+						toolNames = append(toolNames, name)
+					}
+				} else if name, ok := tcMap["name"].(string); ok {
+					toolNames = append(toolNames, name)
+				}
+			}
+		}
+		if len(toolNames) > 0 {
+			return fmt.Sprintf("[Tool Calls: %s]", strings.Join(toolNames, ", "))
+		}
+	}
+
+	if text, ok := msgMap["text"].(string); ok && text != "" {
+		return text
+	}
+
+	if fc, ok := msgMap["function_call"].(map[string]interface{}); ok {
+		if name, ok := fc["name"].(string); ok {
+			return fmt.Sprintf("[Function Call: %s]", name)
+		}
+	}
+
+	return ""
+}
+
 func (m *Model) renderMessageSummary(msg interface{}, idx int, contentStyle, mutedStyle lipgloss.Style, focused bool) []string {
 	msgMap, ok := msg.(map[string]interface{})
 	if !ok {
@@ -1043,8 +1116,7 @@ func (m *Model) renderMessageSummary(msg interface{}, idx int, contentStyle, mut
 	}
 
 	role, _ := msgMap["role"].(string)
-	content, _ := msgMap["content"].(string)
-	toolCalls, _ := msgMap["tool_calls"].([]interface{})
+	previewContent := extractMessagePreview(msg)
 
 	roleIcon := map[string]string{
 		"system":   "📦",
@@ -1068,12 +1140,12 @@ func (m *Model) renderMessageSummary(msg interface{}, idx int, contentStyle, mut
 		previewLen = 20
 	}
 
+	previewContent = strings.ReplaceAll(previewContent, "\n", " ")
+	previewContent = strings.ReplaceAll(previewContent, "\r", "")
+
 	summary := roleIcon + " " + role
-	if content != "" {
-		summary += ": " + truncate(content, previewLen)
-	}
-	if len(toolCalls) > 0 {
-		summary += fmt.Sprintf(" [+%d tool_calls]", len(toolCalls))
+	if previewContent != "" {
+		summary += ": " + truncate(previewContent, previewLen)
 	}
 
 	return []string{style.Render(fmt.Sprintf("%s[%d] %s", prefix, idx, summary))}
@@ -1089,46 +1161,97 @@ func (m *Model) renderMessageItem(msg interface{}, idx int, contentStyle, mutedS
 	}
 
 	role, _ := msgMap["role"].(string)
-	content, contentIsString := msgMap["content"].(string)
-	if !contentIsString {
-		rawContent := msgMap["content"]
-		if rawContent != nil {
-			if jsonBytes, err := json.Marshal(rawContent); err == nil {
-				content = fmt.Sprintf("(type: %T) %s", rawContent, truncate(string(jsonBytes), 100))
-			}
-		}
-	}
-	toolCalls, _ := msgMap["tool_calls"].([]interface{})
-
 	var lines []string
 	lines = append(lines, groupStyle.Render(fmt.Sprintf("  [%d] %s", idx, role)))
 
-	if content != "" {
-		lines = append(lines, contentStyle.Render(truncate(content, 500)))
+	var markdownText string
+
+	rawContent := msgMap["content"]
+	if rawContent != nil {
+		if s, ok := rawContent.(string); ok {
+			markdownText = s
+		} else if list, ok := rawContent.([]interface{}); ok {
+			var parts []string
+			for _, item := range list {
+				if itemMap, ok := item.(map[string]interface{}); ok {
+					itemType, _ := itemMap["type"].(string)
+					if text, ok := itemMap["text"].(string); ok && text != "" {
+						parts = append(parts, text)
+					} else if itemType == "tool_use" {
+						toolName, _ := itemMap["name"].(string)
+						toolID, _ := itemMap["id"].(string)
+						var inputStr string
+						if input, ok := itemMap["input"].(map[string]interface{}); ok {
+							if bytes, err := json.Marshal(input); err == nil {
+								inputStr = string(bytes)
+							}
+						}
+						parts = append(parts, fmt.Sprintf("\n🔧 **[Tool Use: %s (ID: %s)]**\n`input: %s`\n", toolName, toolID, inputStr))
+					} else if itemType == "image" {
+						parts = append(parts, "\n🖼️ **[Image Block]**\n")
+					} else {
+						if bytes, err := json.Marshal(itemMap); err == nil {
+							parts = append(parts, fmt.Sprintf("\n```json\n%s\n```\n", string(bytes)))
+						}
+					}
+				} else if s, ok := item.(string); ok {
+					parts = append(parts, s)
+				}
+			}
+			markdownText = strings.Join(parts, "\n\n")
+		} else {
+			if bytes, err := json.MarshalIndent(rawContent, "", "  "); err == nil {
+				markdownText = fmt.Sprintf("```json\n%s\n```", string(bytes))
+			}
+		}
 	}
 
+	if markdownText != "" {
+		renderedLines := m.renderMarkdownFull(markdownText)
+		for _, rl := range renderedLines {
+			lines = append(lines, "  "+rl)
+		}
+	}
+
+	toolCalls, _ := msgMap["tool_calls"].([]interface{})
 	if len(toolCalls) > 0 {
-		lines = append(lines, mutedStyle.Render("  tool_calls:"))
+		lines = append(lines, "")
+		lines = append(lines, mutedStyle.Render("  🔧 Tool Calls:"))
 		for _, tc := range toolCalls {
 			if tcMap, ok := tc.(map[string]interface{}); ok {
 				var fnName string
 				var args string
+				tcID, _ := tcMap["id"].(string)
 				if fn, ok := tcMap["function"].(map[string]interface{}); ok {
 					if n, ok := fn["name"].(string); ok {
 						fnName = n
 					}
 					if a, ok := fn["arguments"].(string); ok {
-						args = truncate(a, 200)
-					} else if rawArgs := fn["arguments"]; rawArgs != nil {
-						if jsonBytes, err := json.Marshal(rawArgs); err == nil {
-							args = truncate(string(jsonBytes), 200)
+						var parsed interface{}
+						if err := json.Unmarshal([]byte(a), &parsed); err == nil {
+							if pretty, err := json.MarshalIndent(parsed, "      ", "  "); err == nil {
+								args = string(pretty)
+							} else {
+								args = a
+							}
+						} else {
+							args = a
 						}
 					}
 				}
-				if args != "" {
-					lines = append(lines, contentStyle.Render(fmt.Sprintf("    - %s(%s)", fnName, args)))
+				
+				if tcID != "" {
+					lines = append(lines, valueStyle.Render(fmt.Sprintf("    - Call: %s (ID: %s)", fnName, tcID)))
 				} else {
-					lines = append(lines, contentStyle.Render(fmt.Sprintf("    - %s()", fnName)))
+					lines = append(lines, valueStyle.Render(fmt.Sprintf("    - Call: %s", fnName)))
+				}
+
+				if args != "" {
+					argsMarkdown := "```json\n" + args + "\n```"
+					renderedArgs := m.renderMarkdownFull(argsMarkdown)
+					for _, rl := range renderedArgs {
+						lines = append(lines, "      "+rl)
+					}
 				}
 			}
 		}
@@ -1157,7 +1280,7 @@ func (m *Model) renderToolSummary(tool interface{}, idx int, contentStyle, muted
 		name = n
 	}
 	if d, ok := toolMap["description"].(string); ok {
-		desc = truncate(d, previewLen)
+		desc = d
 	}
 
 	// 2. 尝试从嵌套 of function 字段读取并覆盖
@@ -1166,7 +1289,7 @@ func (m *Model) renderToolSummary(tool interface{}, idx int, contentStyle, muted
 			name = n
 		}
 		if d, ok := fn["description"].(string); ok {
-			desc = truncate(d, previewLen)
+			desc = d
 		}
 	}
 
@@ -1180,7 +1303,7 @@ func (m *Model) renderToolSummary(tool interface{}, idx int, contentStyle, muted
 	// 4. 如果最后什么都没读到，直接使用简短的 JSON 作为摘要以防空白
 	if name == "" && desc == "" {
 		if jsonBytes, err := json.Marshal(toolMap); err == nil {
-			name = truncate(string(jsonBytes), previewLen)
+			name = string(jsonBytes)
 		} else {
 			name = "未知工具"
 		}
@@ -1193,9 +1316,15 @@ func (m *Model) renderToolSummary(tool interface{}, idx int, contentStyle, muted
 		style = contentStyle.Bold(true)
 	}
 
+	// 清洗换行符
+	name = strings.ReplaceAll(name, "\n", " ")
+	name = strings.ReplaceAll(name, "\r", "")
+	desc = strings.ReplaceAll(desc, "\n", " ")
+	desc = strings.ReplaceAll(desc, "\r", "")
+
 	summary := fmt.Sprintf("🔧 %s", name)
 	if desc != "" {
-		summary += ": " + desc
+		summary += ": " + truncate(desc, previewLen)
 	}
 
 	return []string{style.Render(fmt.Sprintf("%s[%d] %s", prefix, idx, summary))}
@@ -1224,6 +1353,9 @@ func (m *Model) renderSystemSummary(sys interface{}, idx int, contentStyle, mute
 	if previewLen < 20 {
 		previewLen = 20
 	}
+
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.ReplaceAll(text, "\r", "")
 
 	summary := fmt.Sprintf("system[%d] (%s)", idx, sysType)
 	if text != "" {
@@ -1577,40 +1709,69 @@ func (m *Model) renderToolItem(tool interface{}, idx int, contentStyle, mutedSty
 	var lines []string
 	lines = append(lines, groupStyle.Render(fmt.Sprintf("  [%d] tool", idx)))
 
-	hasFn := false
+	var name, desc string
+	var schema interface{}
+
+	// 1. 尝试从 function 中提取
 	if fn, ok := toolMap["function"].(map[string]interface{}); ok {
-		hasFn = true
-		if name, ok := fn["name"].(string); ok {
-			lines = append(lines, valueStyle.Render("  name: "+name))
+		if n, ok := fn["name"].(string); ok {
+			name = n
 		}
-		if desc, ok := fn["description"].(string); ok {
-			lines = append(lines, contentStyle.Render("  description: "+truncate(desc, 300)))
+		if d, ok := fn["description"].(string); ok {
+			desc = d
 		}
-		if params, ok := fn["parameters"].(map[string]interface{}); ok {
-			if jsonBytes, err := json.MarshalIndent(params, "    ", "  "); err == nil {
-				lines = append(lines, mutedStyle.Render("  parameters:"))
-				lines = append(lines, contentStyle.Render("    "+truncate(string(jsonBytes), 300)))
+		if p, ok := fn["parameters"].(interface{}); ok {
+			schema = p
+		} else if i, ok := fn["input_schema"].(interface{}); ok {
+			schema = i
+		}
+	}
+
+	// 2. 尝试从最外层提取
+	if name == "" {
+		if n, ok := toolMap["name"].(string); ok {
+			name = n
+		}
+	}
+	if desc == "" {
+		if d, ok := toolMap["description"].(string); ok {
+			desc = d
+		}
+	}
+	if schema == nil {
+		if p, ok := toolMap["parameters"].(interface{}); ok {
+			schema = p
+		} else if i, ok := toolMap["input_schema"].(interface{}); ok {
+			schema = i
+		}
+	}
+
+	if name != "" {
+		lines = append(lines, valueStyle.Render("  name: "+name))
+	}
+	if desc != "" {
+		lines = append(lines, "  description:")
+		renderedDesc := m.renderMarkdownFull(desc)
+		for _, rl := range renderedDesc {
+			lines = append(lines, "    "+rl)
+		}
+	}
+
+	if schema != nil {
+		if jsonBytes, err := json.MarshalIndent(schema, "", "  "); err == nil {
+			lines = append(lines, mutedStyle.Render("  schema / parameters (input_schema):"))
+			schemaMarkdown := "```json\n" + string(jsonBytes) + "\n```"
+			renderedSchema := m.renderMarkdownFull(schemaMarkdown)
+			for _, rl := range renderedSchema {
+				lines = append(lines, "    "+rl)
 			}
 		}
 	}
 
-	if !hasFn {
-		if name, ok := toolMap["name"].(string); ok {
-			lines = append(lines, valueStyle.Render("  name: "+name))
-		}
-		if desc, ok := toolMap["description"].(string); ok {
-			lines = append(lines, contentStyle.Render("  description: "+truncate(desc, 300)))
-		}
-		if params, ok := toolMap["parameters"].(map[string]interface{}); ok {
-			if jsonBytes, err := json.MarshalIndent(params, "    ", "  "); err == nil {
-				lines = append(lines, mutedStyle.Render("  parameters:"))
-				lines = append(lines, contentStyle.Render("    "+truncate(string(jsonBytes), 300)))
-			}
-		}
-		if len(lines) == 1 { // 只有 "tool" 一行，没有读到任何有效字段
-			if jsonBytes, err := json.MarshalIndent(toolMap, "  ", "  "); err == nil {
-				lines = append(lines, contentStyle.Render(string(jsonBytes)))
-			}
+	// 兜底：如果还是空白
+	if len(lines) == 1 {
+		if jsonBytes, err := json.MarshalIndent(toolMap, "  ", "  "); err == nil {
+			lines = append(lines, contentStyle.Render(string(jsonBytes)))
 		}
 	}
 
@@ -1659,40 +1820,91 @@ func (m *Model) renderChoiceItem(choice interface{}, idx int, contentStyle, mute
 		lines = append(lines, valueStyle.Render("  finish_reason: "+fr))
 	}
 
+	var markdownText string
+	var toolCalls []interface{}
+
+	if text, ok := c["text"].(string); ok && text != "" {
+		markdownText = text
+	}
+
 	if msg, ok := c["message"].(map[string]interface{}); ok {
 		if role, ok := msg["role"].(string); ok {
 			lines = append(lines, valueStyle.Render("  role: "+role))
 		}
 		rawContent := msg["content"]
-		if content, ok := rawContent.(string); ok && content != "" {
-			lines = append(lines, contentStyle.Render("  content: "+truncate(content, 300)))
-		} else if rawContent != nil {
-			if jsonBytes, err := json.Marshal(rawContent); err == nil {
-				lines = append(lines, contentStyle.Render("  content: "+truncate(string(jsonBytes), 200)))
+		if rawContent != nil {
+			if s, ok := rawContent.(string); ok {
+				markdownText = s
+			} else if list, ok := rawContent.([]interface{}); ok {
+				var parts []string
+				for _, item := range list {
+					if itemMap, ok := item.(map[string]interface{}); ok {
+						if text, ok := itemMap["text"].(string); ok && text != "" {
+							parts = append(parts, text)
+						} else if bytes, err := json.Marshal(itemMap); err == nil {
+							parts = append(parts, fmt.Sprintf("\n```json\n%s\n```\n", string(bytes)))
+						}
+					} else if s, ok := item.(string); ok {
+						parts = append(parts, s)
+					}
+				}
+				markdownText = strings.Join(parts, "\n\n")
+			} else {
+				if bytes, err := json.MarshalIndent(rawContent, "", "  "); err == nil {
+					markdownText = fmt.Sprintf("```json\n%s\n```", string(bytes))
+				}
 			}
 		}
-		if toolCalls, ok := msg["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
-			lines = append(lines, mutedStyle.Render("  tool_calls:"))
-			for _, tc := range toolCalls {
-				if tcMap, ok := tc.(map[string]interface{}); ok {
-					var fnName string
-					var args string
-					if fn, ok := tcMap["function"].(map[string]interface{}); ok {
-						if n, ok := fn["name"].(string); ok {
-							fnName = n
-						}
-						if a, ok := fn["arguments"].(string); ok {
-							args = truncate(a, 200)
-						} else if rawArgs := fn["arguments"]; rawArgs != nil {
-							if jsonBytes, err := json.Marshal(rawArgs); err == nil {
-								args = truncate(string(jsonBytes), 200)
+		if tc, ok := msg["tool_calls"].([]interface{}); ok && len(tc) > 0 {
+			toolCalls = tc
+		}
+	}
+
+	if markdownText != "" {
+		lines = append(lines, "  content:")
+		renderedLines := m.renderMarkdownFull(markdownText)
+		for _, rl := range renderedLines {
+			lines = append(lines, "    "+rl)
+		}
+	}
+
+	if len(toolCalls) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, mutedStyle.Render("  🔧 Tool Calls:"))
+		for _, tc := range toolCalls {
+			if tcMap, ok := tc.(map[string]interface{}); ok {
+				var fnName string
+				var args string
+				tcID, _ := tcMap["id"].(string)
+				if fn, ok := tcMap["function"].(map[string]interface{}); ok {
+					if n, ok := fn["name"].(string); ok {
+						fnName = n
+					}
+					if a, ok := fn["arguments"].(string); ok {
+						var parsed interface{}
+						if err := json.Unmarshal([]byte(a), &parsed); err == nil {
+							if pretty, err := json.MarshalIndent(parsed, "      ", "  "); err == nil {
+								args = string(pretty)
+							} else {
+								args = a
 							}
+						} else {
+							args = a
 						}
 					}
-					if args != "" {
-						lines = append(lines, contentStyle.Render(fmt.Sprintf("    - %s(%s)", fnName, args)))
-					} else {
-						lines = append(lines, contentStyle.Render(fmt.Sprintf("    - %s()", fnName)))
+				}
+				
+				if tcID != "" {
+					lines = append(lines, valueStyle.Render(fmt.Sprintf("    - Call: %s (ID: %s)", fnName, tcID)))
+				} else {
+					lines = append(lines, valueStyle.Render(fmt.Sprintf("    - Call: %s", fnName)))
+				}
+
+				if args != "" {
+					argsMarkdown := "```json\n" + args + "\n```"
+					renderedArgs := m.renderMarkdownFull(argsMarkdown)
+					for _, rl := range renderedArgs {
+						lines = append(lines, "      "+rl)
 					}
 				}
 			}
