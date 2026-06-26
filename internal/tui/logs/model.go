@@ -2279,11 +2279,15 @@ func renderLogsTableOld(resp *api.SpendLogsResponse, intervalVal int, newLogIDs 
 
 			keyLabel := "当前 Key"
 			if len(entry) > 0 {
+				var keys []string
 				for k := range entry {
 					if k != "spend" && k != "models" && k != "users" && k != "startTime" {
-						keyLabel = k
-						break
+						keys = append(keys, k)
 					}
+				}
+				if len(keys) > 0 {
+					sort.Strings(keys)
+					keyLabel = keys[0]
 				}
 			}
 			if len(keyLabel) > 12 {
