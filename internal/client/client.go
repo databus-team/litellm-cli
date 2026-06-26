@@ -10,9 +10,9 @@ type Client struct {
 	config *config.Config
 }
 
-func New(cfg *config.Config) *Client {
+func New(cfg *config.Config, opts ...api.ClientOption) *Client {
 	return &Client{
-		api:    api.NewClient(cfg),
+		api:    api.NewClient(cfg, opts...),
 		config: cfg,
 	}
 }

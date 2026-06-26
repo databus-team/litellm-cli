@@ -18,7 +18,15 @@ type Client struct {
 	jwtToken  string
 }
 
-func NewClient(cfg *config.Config) *Client {
+type ClientOption func(*Client)
+
+func WithTransport(transport http.RoundTripper) ClientOption {
+	return func(c *Client) {
+		c.resty.SetTransport(transport)
+	}
+}
+
+func NewClient(cfg *config.Config, opts ...ClientOption) *Client {
 	client := resty.New()
 	client.SetBaseURL(cfg.BaseURL)
 	client.SetHeader("Authorization", "Bearer "+cfg.APIKey)
@@ -30,11 +38,17 @@ func NewClient(cfg *config.Config) *Client {
 		},
 	})
 
-	return &Client{
+	c := &Client{
 		resty:    client,
 		config:   cfg,
 		jwtToken: cfg.JWTToken,
 	}
+
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	return c
 }
 
 func (c *Client) Get(path string, result interface{}) error {

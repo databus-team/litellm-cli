@@ -2,10 +2,13 @@ package client
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"litellm-cli/internal/api"
 	"litellm-cli/internal/config"
 )
 
@@ -145,5 +148,58 @@ func TestSpendLogsResponseParsing(t *testing.T) {
 	// 这里只是验证 raw JSON 可用
 	if len(resp) == 0 {
 		t.Error("Expected non-empty JSON")
+	}
+}
+
+type mockTransport struct {
+	roundTripFunc func(req *http.Request) (*http.Response, error)
+}
+
+func (m *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return m.roundTripFunc(req)
+}
+
+func TestClient_WithMockTransport(t *testing.T) {
+	mockResp := `{"data":[{"object":"model","id":"mock-gpt-4","model_name":"Mock GPT-4"}]}`
+
+	transport := &mockTransport{
+		roundTripFunc: func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path != "/models" {
+				t.Errorf("expected path /models, got %s", req.URL.Path)
+			}
+
+			header := make(http.Header)
+			header.Set("Content-Type", "application/json")
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(mockResp)),
+				Header:     header,
+			}, nil
+		},
+	}
+
+	cfg := &config.Config{
+		APIKey:  "test-key",
+		BaseURL: "https://mock-api.litellm.local",
+	}
+
+	c := New(cfg, api.WithTransport(transport))
+
+	resp, err := c.GetModels()
+	if err != nil {
+		t.Fatalf("GetModels() error = %v", err)
+	}
+
+	if len(resp.Models) != 1 {
+		t.Fatalf("expected 1 model, got %d", len(resp.Models))
+	}
+
+	model := resp.Models[0]
+	if model.ID != "mock-gpt-4" {
+		t.Errorf("expected model ID 'mock-gpt-4', got '%s'", model.ID)
+	}
+	if model.ModelName != "Mock GPT-4" {
+		t.Errorf("expected model name 'Mock GPT-4', got '%s'", model.ModelName)
 	}
 }
