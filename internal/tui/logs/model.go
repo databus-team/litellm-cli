@@ -2101,7 +2101,7 @@ func (m *Model) renderChoiceItem(choice interface{}, idx int, contentStyle, mute
 		}
 
 		if cleanText != "" {
-			lines = append(lines, "  content:")
+			lines = append(lines, mutedStyle.Render("  💬 响应内容:"))
 			renderedLines := m.renderMarkdownFull(cleanText)
 			for _, rl := range renderedLines {
 				lines = append(lines, "    "+rl)
