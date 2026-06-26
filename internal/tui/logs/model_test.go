@@ -229,6 +229,58 @@ func TestLogsTUI_HappyPath(t *testing.T) {
 	// 验证 Choice 详情视图（此时包含了用 Markdown 渲染的“思考过程”和“正文内容”），并保存快照！
 	testutils.AssertTUISnapshot(t, "logs_choice_detail_view", normalizeOutput(m.View()))
 
+	// == 额外测试：响应式折叠/展开/聚焦切换/复制交互状态机 ==
+	
+	// 1. 模拟按 Enter 键折叠当前聚焦的 thinking 块
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(*Model)
+	if !m.detailState.blockCollapsed["thinking"] {
+		t.Fatal("expected thinking block to be collapsed after pressing Enter")
+	}
+	testutils.AssertTUISnapshot(t, "logs_choice_detail_thinking_collapsed", normalizeOutput(m.View()))
+
+	// 2. 模拟再按一次 Enter 键展开 thinking 块
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(*Model)
+	if m.detailState.blockCollapsed["thinking"] {
+		t.Fatal("expected thinking block to be expanded after pressing Enter again")
+	}
+
+	// 3. 模拟按 Tab 键将块聚焦切换到 content (响应内容)
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = newModel.(*Model)
+	if m.detailState.focusedBlock != 1 {
+		t.Fatalf("expected focusedBlock to be 1, got %d", m.detailState.focusedBlock)
+	}
+	testutils.AssertTUISnapshot(t, "logs_choice_detail_content_focused", normalizeOutput(m.View()))
+
+	// 4. 模拟按 C 键触发复制
+	newModel, copyCmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	m = newModel.(*Model)
+	if m.detailState.copiedNotification == "" {
+		t.Fatal("expected copiedNotification to be populated after pressing C")
+	}
+	if copyCmd == nil {
+		t.Fatal("expected non-nil copyCmd")
+	}
+	// 验证复制提示条的展示，并记录快照
+	testutils.AssertTUISnapshot(t, "logs_choice_detail_copy_notified", normalizeOutput(m.View()))
+
+	// 5. 模拟按 Enter 键折叠当前聚焦的 content 块
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(*Model)
+	if !m.detailState.blockCollapsed["content"] {
+		t.Fatal("expected content block to be collapsed after pressing Enter")
+	}
+	testutils.AssertTUISnapshot(t, "logs_choice_detail_content_collapsed", normalizeOutput(m.View()))
+
+	// 6. 模拟再按一次 Enter 键展开 content 块
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(*Model)
+	if m.detailState.blockCollapsed["content"] {
+		t.Fatal("expected content block to be expanded after pressing Enter again")
+	}
+
 	// 按 ESC 退出单项详情，回到 Choices 列表
 	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = newModel.(*Model)
