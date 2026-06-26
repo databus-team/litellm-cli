@@ -184,10 +184,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.detailState.currentItemIndex = m.detailState.selectedItem
 						m.detailState.markdownScrollOffset = 0
 					} else {
-						// 单项详情模式中，按 Enter 展开或折叠当前聚焦的块
 						if len(m.detailState.blocks) > 0 && m.detailState.focusedBlock < len(m.detailState.blocks) {
 							currentBlock := m.detailState.blocks[m.detailState.focusedBlock]
-							m.detailState.blockCollapsed[currentBlock] = !m.detailState.blockCollapsed[currentBlock]
+							if collapsed, exists := m.detailState.blockCollapsed[currentBlock]; exists {
+								m.detailState.blockCollapsed[currentBlock] = !collapsed
+							} else {
+								m.detailState.blockCollapsed[currentBlock] = false // 默认是折叠的(true)，第一次按 Enter 应该展开它
+							}
 						}
 					}
 				}
@@ -1581,28 +1584,50 @@ func (m *Model) renderMessageItem(msg interface{}, idx int, contentStyle, mutedS
 	}
 
 	if markdownText != "" {
-		// 智能默认折叠：如果行数 > 8 且没有手动展开/折叠记录，默认折叠
-		if _, exists := m.detailState.blockCollapsed["thinking"]; !exists && thinking != "" {
-			if strings.Count(thinking, "\n") > 8 {
-				m.detailState.blockCollapsed["thinking"] = true
-			}
+		// 动态计算半屏折叠阈值
+		threshold := m.height / 2
+		if threshold < 8 {
+			threshold = 8
 		}
-		if _, exists := m.detailState.blockCollapsed["content"]; !exists && cleanText != "" {
-			if strings.Count(cleanText, "\n") > 8 {
-				m.detailState.blockCollapsed["content"] = true
-			}
+
+		// 预先渲染以确定真实的行数
+		var renderedThinking, renderedLines []string
+		var thinkingLinesCount, contentLinesCount int
+		var canThinkingCollapse, canContentCollapse bool
+
+		if thinking != "" {
+			renderedThinking = m.renderMarkdownFull(thinking)
+			thinkingLinesCount = len(renderedThinking)
+			canThinkingCollapse = thinkingLinesCount > threshold
+		}
+
+		if cleanText != "" {
+			renderedLines = m.renderMarkdownFull(cleanText)
+			contentLinesCount = len(renderedLines)
+			canContentCollapse = contentLinesCount > threshold
 		}
 
 		if thinking != "" {
 			isFocused := len(availableBlocks) > 0 && availableBlocks[m.detailState.focusedBlock] == "thinking"
-			isCollapsed := m.detailState.blockCollapsed["thinking"]
+			isCollapsed := false
+			if canThinkingCollapse {
+				if collapsed, exists := m.detailState.blockCollapsed["thinking"]; exists {
+					isCollapsed = collapsed
+				} else {
+					isCollapsed = true // 默认折叠
+				}
+			}
 
 			var title string
 			if isFocused {
 				prefix := "▶ "
-				tip := " (按 Enter 展开，按 C 复制)"
-				if !isCollapsed {
-					tip = " (按 Enter 折叠，按 C 复制)"
+				tip := " (按 C 复制)"
+				if canThinkingCollapse {
+					if isCollapsed {
+						tip = " (按 Enter 展开全部，按 C 复制)"
+					} else {
+						tip = " (按 Enter 折叠内容，按 C 复制)"
+					}
 				}
 				title = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true).Render(prefix + "🧠 思考过程" + tip)
 			} else {
@@ -1615,27 +1640,44 @@ func (m *Model) renderMessageItem(msg interface{}, idx int, contentStyle, mutedS
 			}
 			lines = append(lines, title)
 
-			if !isCollapsed {
-				renderedThinking := m.renderMarkdownFull(thinking)
+			if isCollapsed {
+				// 折叠状态下只展示前 threshold 行
+				for _, rl := range renderedThinking[:threshold] {
+					lines = append(lines, "    "+rl)
+				}
+				remaining := thinkingLinesCount - threshold
+				lines = append(lines, mutedStyle.Render(fmt.Sprintf("    ... 已折叠多余 %d 行思考过程，按 Enter 展开全部 ...", remaining)))
+				lines = append(lines, "")
+			} else {
+				// 展开状态下展示全文
 				for _, rl := range renderedThinking {
 					lines = append(lines, "    "+rl)
 				}
-				lines = append(lines, "")
-			} else {
 				lines = append(lines, "")
 			}
 		}
 
 		if cleanText != "" {
 			isFocused := len(availableBlocks) > 0 && availableBlocks[m.detailState.focusedBlock] == "content"
-			isCollapsed := m.detailState.blockCollapsed["content"]
+			isCollapsed := false
+			if canContentCollapse {
+				if collapsed, exists := m.detailState.blockCollapsed["content"]; exists {
+					isCollapsed = collapsed
+				} else {
+					isCollapsed = true // 默认折叠
+				}
+			}
 
 			var title string
 			if isFocused {
 				prefix := "▶ "
-				tip := " (按 Enter 展开，按 C 复制)"
-				if !isCollapsed {
-					tip = " (按 Enter 折叠，按 C 复制)"
+				tip := " (按 C 复制)"
+				if canContentCollapse {
+					if isCollapsed {
+						tip = " (按 Enter 展开全部，按 C 复制)"
+					} else {
+						tip = " (按 Enter 折叠内容，按 C 复制)"
+					}
 				}
 				title = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true).Render(prefix + "💬 正文内容" + tip)
 			} else {
@@ -1648,13 +1690,18 @@ func (m *Model) renderMessageItem(msg interface{}, idx int, contentStyle, mutedS
 			}
 			lines = append(lines, title)
 
-			if !isCollapsed {
-				renderedLines := m.renderMarkdownFull(cleanText)
+			if isCollapsed {
+				// 折叠状态下只展示前 threshold 行
+				for _, rl := range renderedLines[:threshold] {
+					lines = append(lines, "    "+rl)
+				}
+				remaining := contentLinesCount - threshold
+				lines = append(lines, mutedStyle.Render(fmt.Sprintf("    ... 已折叠多余 %d 行正文内容，按 Enter 展开全部 ...", remaining)))
+			} else {
+				// 展开状态下展示全文
 				for _, rl := range renderedLines {
 					lines = append(lines, "    "+rl)
 				}
-			} else {
-				lines = append(lines, "")
 			}
 		}
 	}
@@ -2325,80 +2372,124 @@ func (m *Model) renderChoiceItem(choice interface{}, idx int, contentStyle, mute
 	}
 
 	if markdownText != "" {
-		// 智能默认折叠：如果行数 > 8 且没有手动展开/折叠记录，默认折叠
-		if _, exists := m.detailState.blockCollapsed["thinking"]; !exists && thinking != "" {
-			if strings.Count(thinking, "\n") > 8 {
-				m.detailState.blockCollapsed["thinking"] = true
-			}
+		// 动态计算半屏折叠阈值
+		threshold := m.height / 2
+		if threshold < 8 {
+			threshold = 8
 		}
-		if _, exists := m.detailState.blockCollapsed["content"]; !exists && cleanText != "" {
-			if strings.Count(cleanText, "\n") > 8 {
-				m.detailState.blockCollapsed["content"] = true
-			}
+
+		// 预先渲染以确定真实的行数
+		var renderedThinking, renderedLines []string
+		var thinkingLinesCount, contentLinesCount int
+		var canThinkingCollapse, canContentCollapse bool
+
+		if thinking != "" {
+			renderedThinking = m.renderMarkdownFull(thinking)
+			thinkingLinesCount = len(renderedThinking)
+			canThinkingCollapse = thinkingLinesCount > threshold
+		}
+
+		if cleanText != "" {
+			renderedLines = m.renderMarkdownFull(cleanText)
+			contentLinesCount = len(renderedLines)
+			canContentCollapse = contentLinesCount > threshold
 		}
 
 		if thinking != "" {
 			isFocused := len(availableBlocks) > 0 && availableBlocks[m.detailState.focusedBlock] == "thinking"
-			isCollapsed := m.detailState.blockCollapsed["thinking"]
+			isCollapsed := false
+			if canThinkingCollapse {
+				if collapsed, exists := m.detailState.blockCollapsed["thinking"]; exists {
+					isCollapsed = collapsed
+				} else {
+					isCollapsed = true // 默认折叠
+				}
+			}
 
 			var title string
 			if isFocused {
 				prefix := "▶ "
-				tip := " (按 Enter 展开，按 C 复制)"
-				if !isCollapsed {
-					tip = " (按 Enter 折叠，按 C 复制)"
+				tip := " (按 C 复制)"
+				if canThinkingCollapse {
+					if isCollapsed {
+						tip = " (按 Enter 展开全部，按 C 复制)"
+					} else {
+						tip = " (按 Enter 折叠内容，按 C 复制)"
+					}
 				}
 				title = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true).Render(prefix + "🧠 思考过程" + tip)
 			} else {
 				prefix := "  "
 				status := ""
-				if isCollapsed {
+				if canThinkingCollapse && isCollapsed {
 					status = " [已折叠]"
 				}
 				title = mutedStyle.Render(prefix + "🧠 思考过程" + status + ":")
 			}
 			lines = append(lines, title)
 
-			if !isCollapsed {
-				renderedThinking := m.renderMarkdownFull(thinking)
+			if canThinkingCollapse && isCollapsed {
+				// 折叠状态下只展示前 threshold 行
+				for _, rl := range renderedThinking[:threshold] {
+					lines = append(lines, "    "+rl)
+				}
+				remaining := thinkingLinesCount - threshold
+				lines = append(lines, mutedStyle.Render(fmt.Sprintf("    ... 已折叠多余 %d 行思考过程，按 Enter 展开全部 ...", remaining)))
+				lines = append(lines, "")
+			} else {
+				// 展开状态下展示全文
 				for _, rl := range renderedThinking {
 					lines = append(lines, "    "+rl)
 				}
-				lines = append(lines, "")
-			} else {
 				lines = append(lines, "")
 			}
 		}
 
 		if cleanText != "" {
 			isFocused := len(availableBlocks) > 0 && availableBlocks[m.detailState.focusedBlock] == "content"
-			isCollapsed := m.detailState.blockCollapsed["content"]
+			isCollapsed := false
+			if canContentCollapse {
+				if collapsed, exists := m.detailState.blockCollapsed["content"]; exists {
+					isCollapsed = collapsed
+				} else {
+					isCollapsed = true // 默认折叠
+				}
+			}
 
 			var title string
 			if isFocused {
 				prefix := "▶ "
-				tip := " (按 Enter 展开，按 C 复制)"
-				if !isCollapsed {
-					tip = " (按 Enter 折叠，按 C 复制)"
+				tip := " (按 C 复制)"
+				if canContentCollapse {
+					if isCollapsed {
+						tip = " (按 Enter 展开全部，按 C 复制)"
+					} else {
+						tip = " (按 Enter 折叠内容，按 C 复制)"
+					}
 				}
 				title = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true).Render(prefix + "💬 响应内容" + tip)
 			} else {
 				prefix := "  "
 				status := ""
-				if isCollapsed {
+				if canContentCollapse && isCollapsed {
 					status = " [已折叠]"
 				}
 				title = mutedStyle.Render(prefix + "💬 响应内容" + status + ":")
 			}
 			lines = append(lines, title)
 
-			if !isCollapsed {
-				renderedLines := m.renderMarkdownFull(cleanText)
+			if canContentCollapse && isCollapsed {
+				// 折叠状态下只展示前 threshold 行
+				for _, rl := range renderedLines[:threshold] {
+					lines = append(lines, "    "+rl)
+				}
+				remaining := contentLinesCount - threshold
+				lines = append(lines, mutedStyle.Render(fmt.Sprintf("    ... 已折叠多余 %d 行响应内容，按 Enter 展开全部 ...", remaining)))
+			} else {
+				// 展开状态下展示全文
 				for _, rl := range renderedLines {
 					lines = append(lines, "    "+rl)
 				}
-			} else {
-				lines = append(lines, "")
 			}
 		}
 	}

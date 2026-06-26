@@ -231,19 +231,19 @@ func TestLogsTUI_HappyPath(t *testing.T) {
 
 	// == 额外测试：响应式折叠/展开/聚焦切换/复制交互状态机 ==
 	
-	// 1. 模拟按 Enter 键折叠当前聚焦的 thinking 块
-	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = newModel.(*Model)
-	if !m.detailState.blockCollapsed["thinking"] {
-		t.Fatal("expected thinking block to be collapsed after pressing Enter")
-	}
-	testutils.AssertTUISnapshot(t, "logs_choice_detail_thinking_collapsed", normalizeOutput(m.View()))
-
-	// 2. 模拟再按一次 Enter 键展开 thinking 块
+	// 1. 模拟按 Enter 键展开当前聚焦的 thinking 块
 	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newModel.(*Model)
 	if m.detailState.blockCollapsed["thinking"] {
-		t.Fatal("expected thinking block to be expanded after pressing Enter again")
+		t.Fatal("expected thinking block to be expanded after pressing Enter")
+	}
+	testutils.AssertTUISnapshot(t, "logs_choice_detail_thinking_expanded", normalizeOutput(m.View()))
+
+	// 2. 模拟再按一次 Enter 键折叠 thinking 块
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(*Model)
+	if !m.detailState.blockCollapsed["thinking"] {
+		t.Fatal("expected thinking block to be collapsed after pressing Enter again")
 	}
 
 	// 3. 模拟按 Tab 键将块聚焦切换到 content (响应内容)
@@ -266,19 +266,19 @@ func TestLogsTUI_HappyPath(t *testing.T) {
 	// 验证复制提示条的展示，并记录快照
 	testutils.AssertTUISnapshot(t, "logs_choice_detail_copy_notified", normalizeOutput(m.View()))
 
-	// 5. 模拟按 Enter 键折叠当前聚焦的 content 块
-	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = newModel.(*Model)
-	if !m.detailState.blockCollapsed["content"] {
-		t.Fatal("expected content block to be collapsed after pressing Enter")
-	}
-	testutils.AssertTUISnapshot(t, "logs_choice_detail_content_collapsed", normalizeOutput(m.View()))
-
-	// 6. 模拟再按一次 Enter 键展开 content 块
+	// 5. 模拟按 Enter 键展开当前聚焦的 content 块
 	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = newModel.(*Model)
 	if m.detailState.blockCollapsed["content"] {
-		t.Fatal("expected content block to be expanded after pressing Enter again")
+		t.Fatal("expected content block to be expanded after pressing Enter")
+	}
+	testutils.AssertTUISnapshot(t, "logs_choice_detail_content_expanded", normalizeOutput(m.View()))
+
+	// 6. 模拟再按一次 Enter 键折叠 content 块
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(*Model)
+	if !m.detailState.blockCollapsed["content"] {
+		t.Fatal("expected content block to be collapsed after pressing Enter again")
 	}
 
 	// 按 ESC 退出单项详情，回到 Choices 列表
