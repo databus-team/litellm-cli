@@ -1,10 +1,12 @@
 package logs
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -16,6 +18,9 @@ import (
 	"litellm-cli/internal/api"
 	"litellm-cli/internal/tui/components"
 )
+
+// clearCopiedNotificationMsg 消息类型用于通知清理临时复制提示
+type clearCopiedNotificationMsg struct{}
 
 // detailTabs 定义详情视图的 tab 页面
 var detailTabs = []string{"main", "system", "tools", "messages", "choices"}
@@ -124,6 +129,11 @@ func (m *Model) Init() tea.Cmd {
 // Update 实现 tea.Model 接口
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case clearCopiedNotificationMsg:
+		if m.detailState != nil {
+			m.detailState.copiedNotification = ""
+		}
+		return m, nil
 	case tea.KeyMsg:
 		key := msg.String()
 		switch key {
@@ -173,18 +183,82 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.detailState.itemDetailMode = true
 						m.detailState.currentItemIndex = m.detailState.selectedItem
 						m.detailState.markdownScrollOffset = 0
+					} else {
+						// 单项详情模式中，按 Enter 展开或折叠当前聚焦的块
+						if len(m.detailState.blocks) > 0 && m.detailState.focusedBlock < len(m.detailState.blocks) {
+							currentBlock := m.detailState.blocks[m.detailState.focusedBlock]
+							m.detailState.blockCollapsed[currentBlock] = !m.detailState.blockCollapsed[currentBlock]
+						}
 					}
 				}
 			}
 			return m, nil
 		case "tab":
 			if m.viewMode == "detail" && m.detailState != nil {
+				if m.detailState.itemDetailMode && len(m.detailState.blocks) > 0 {
+					m.detailState.focusedBlock = (m.detailState.focusedBlock + 1) % len(m.detailState.blocks)
+					return m, nil
+				}
 				if m.detailState.activeTab == "main" {
 					m.detailState.focusedSection = (m.detailState.focusedSection + 1) % 4
 				} else {
 					maxItems := m.getTabItemCount(m.detailState.activeTab)
 					if maxItems > 0 {
 						m.detailState.selectedItem = min(maxItems-1, m.detailState.selectedItem+1)
+					}
+				}
+			}
+			return m, nil
+		case "c", "C":
+			if m.viewMode == "detail" && m.detailState != nil && m.detailState.itemDetailMode {
+				if len(m.detailState.blocks) > 0 && m.detailState.focusedBlock < len(m.detailState.blocks) {
+					currentBlock := m.detailState.blocks[m.detailState.focusedBlock]
+					var textToCopy string
+
+					var itemData interface{}
+					if m.detailState.activeTab != "main" {
+						itemData = m.getArrayItem(m.detailState.activeTab, m.detailState.currentItemIndex)
+					}
+
+					if itemData != nil {
+						var rawText string
+						if m.detailState.activeTab == "choices" {
+							if choiceMap, ok := itemData.(map[string]interface{}); ok {
+								msg, ok := choiceMap["message"].(map[string]interface{})
+								if !ok {
+									msg, _ = choiceMap["delta"].(map[string]interface{})
+								}
+								if msg != nil {
+									rawText = extractMessageContentFull(msg)
+								} else if text, ok := choiceMap["text"].(string); ok {
+									rawText = text
+								}
+							}
+						} else if m.detailState.activeTab == "messages" {
+							if msgMap, ok := itemData.(map[string]interface{}); ok {
+								rawText = extractMessageContentFull(msgMap)
+							}
+						}
+
+						if rawText != "" {
+							thinking, cleanText := extractThinking(rawText)
+							if currentBlock == "thinking" {
+								textToCopy = thinking
+							} else {
+								textToCopy = cleanText
+							}
+						}
+					}
+
+					if textToCopy != "" {
+						// 跨平台终端剪贴板 OSC 52 复制命令
+						cmd := copyToClipboardOSC52(textToCopy)
+						m.detailState.copiedNotification = "已将该块内容成功复制到剪贴板！"
+
+						clearCmd := tea.Tick(time.Second*2, func(t time.Time) tea.Msg {
+							return clearCopiedNotificationMsg{}
+						})
+						return m, tea.Batch(cmd, clearCmd)
 					}
 				}
 			}
@@ -405,6 +479,10 @@ type detailViewState struct {
 	currentItemIndex     int                 // 当前查看详情的项索引
 	selectedStartLine    int                 // 选中项在 lines 中的起始行
 	selectedEndLine      int                 // 选中项在 lines 中的结束行
+	focusedBlock         int                 // 当前聚焦的 Block 索引 (如 0 表示思考过程，1 表示响应内容)
+	blocks               []string            // 详情中当前可聚焦的所有 Block 列表 (如 ["thinking", "content"])
+	blockCollapsed       map[string]bool     // 记录各个 Block 的展开/折叠状态
+	copiedNotification   string              // 复制成功时的临时通知提示文本
 }
 
 func (m *Model) renderDetailView() string {
@@ -442,11 +520,21 @@ func (m *Model) renderDetailView() string {
 			currentItemIndex:     0,
 			selectedStartLine:    -1,
 			selectedEndLine:      -1,
+			focusedBlock:         0,
+			blocks:               []string{},
+			blockCollapsed:       make(map[string]bool),
+			copiedNotification:   "",
 		}
 	} else {
 		// 每次渲染前，先重置选中项的物理行范围
 		m.detailState.selectedStartLine = -1
 		m.detailState.selectedEndLine = -1
+		if m.detailState.blockCollapsed == nil {
+			m.detailState.blockCollapsed = make(map[string]bool)
+		}
+		if m.detailState.blocks == nil {
+			m.detailState.blocks = []string{}
+		}
 	}
 
 	// 获取数据
@@ -503,12 +591,25 @@ func (m *Model) renderDetailView() string {
 
 	// 底部提示
 	lines = append(lines, "")
+
+	// 渲染临时复制成功通知
+	if m.detailState != nil && m.detailState.copiedNotification != "" {
+		notifStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76")).Bold(true)
+		lines = append(lines, notifStyle.Render("  ✨ "+m.detailState.copiedNotification))
+		lines = append(lines, "")
+	}
+
 	var help *components.Help
 	if m.detailState.itemDetailMode {
-		help = components.NewHelp([]components.HelpKey{
-			{Key: "↑↓", Desc: "滚动查看"},
-			{Key: "ESC", Desc: "返回列表"},
-		})
+		var keys []components.HelpKey
+		keys = append(keys, components.HelpKey{Key: "↑↓", Desc: "滚动"})
+		if len(m.detailState.blocks) > 0 {
+			keys = append(keys, components.HelpKey{Key: "Tab", Desc: "切换聚焦块"})
+			keys = append(keys, components.HelpKey{Key: "Enter", Desc: "展开/折叠"})
+			keys = append(keys, components.HelpKey{Key: "C", Desc: "复制聚焦块"})
+		}
+		keys = append(keys, components.HelpKey{Key: "ESC", Desc: "返回"})
+		help = components.NewHelp(keys)
 	} else {
 		help = components.NewHelp([]components.HelpKey{
 			{Key: "↑↓", Desc: "切换"},
@@ -1422,21 +1523,98 @@ func (m *Model) renderMessageItem(msg interface{}, idx int, contentStyle, mutedS
 	// 使用统一且健壮的提取逻辑，支持多模态 blocks、单对象 map 等
 	markdownText := extractMessageContentFull(msgMap)
 
+	// 动态收集当前 Message 中的可聚焦块
+	var availableBlocks []string
+	var thinking, cleanText string
 	if markdownText != "" {
-		thinking, cleanText := extractThinking(markdownText)
+		thinking, cleanText = extractThinking(markdownText)
 		if thinking != "" {
-			lines = append(lines, mutedStyle.Render("  🧠 思考过程:"))
-			renderedThinking := m.renderMarkdownFull(thinking)
-			for _, rl := range renderedThinking {
-				lines = append(lines, "    "+rl)
+			availableBlocks = append(availableBlocks, "thinking")
+		}
+		if cleanText != "" {
+			availableBlocks = append(availableBlocks, "content")
+		}
+	}
+	m.detailState.blocks = availableBlocks
+	if m.detailState.focusedBlock >= len(availableBlocks) {
+		m.detailState.focusedBlock = 0
+	}
+
+	if markdownText != "" {
+		// 智能默认折叠：如果行数 > 8 且没有手动展开/折叠记录，默认折叠
+		if _, exists := m.detailState.blockCollapsed["thinking"]; !exists && thinking != "" {
+			if strings.Count(thinking, "\n") > 8 {
+				m.detailState.blockCollapsed["thinking"] = true
 			}
-			lines = append(lines, "")
+		}
+		if _, exists := m.detailState.blockCollapsed["content"]; !exists && cleanText != "" {
+			if strings.Count(cleanText, "\n") > 8 {
+				m.detailState.blockCollapsed["content"] = true
+			}
+		}
+
+		if thinking != "" {
+			isFocused := len(availableBlocks) > 0 && availableBlocks[m.detailState.focusedBlock] == "thinking"
+			isCollapsed := m.detailState.blockCollapsed["thinking"]
+
+			var title string
+			if isFocused {
+				prefix := "▶ "
+				tip := " (按 Enter 展开，按 C 复制)"
+				if !isCollapsed {
+					tip = " (按 Enter 折叠，按 C 复制)"
+				}
+				title = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true).Render(prefix + "🧠 思考过程" + tip)
+			} else {
+				prefix := "  "
+				status := ""
+				if isCollapsed {
+					status = " [已折叠]"
+				}
+				title = mutedStyle.Render(prefix + "🧠 思考过程" + status + ":")
+			}
+			lines = append(lines, title)
+
+			if !isCollapsed {
+				renderedThinking := m.renderMarkdownFull(thinking)
+				for _, rl := range renderedThinking {
+					lines = append(lines, "    "+rl)
+				}
+				lines = append(lines, "")
+			} else {
+				lines = append(lines, "")
+			}
 		}
 
 		if cleanText != "" {
-			renderedLines := m.renderMarkdownFull(cleanText)
-			for _, rl := range renderedLines {
-				lines = append(lines, "  "+rl)
+			isFocused := len(availableBlocks) > 0 && availableBlocks[m.detailState.focusedBlock] == "content"
+			isCollapsed := m.detailState.blockCollapsed["content"]
+
+			var title string
+			if isFocused {
+				prefix := "▶ "
+				tip := " (按 Enter 展开，按 C 复制)"
+				if !isCollapsed {
+					tip = " (按 Enter 折叠，按 C 复制)"
+				}
+				title = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true).Render(prefix + "💬 正文内容" + tip)
+			} else {
+				prefix := "  "
+				status := ""
+				if isCollapsed {
+					status = " [已折叠]"
+				}
+				title = mutedStyle.Render(prefix + "💬 正文内容" + status + ":")
+			}
+			lines = append(lines, title)
+
+			if !isCollapsed {
+				renderedLines := m.renderMarkdownFull(cleanText)
+				for _, rl := range renderedLines {
+					lines = append(lines, "    "+rl)
+				}
+			} else {
+				lines = append(lines, "")
 			}
 		}
 	}
@@ -2089,22 +2267,98 @@ func (m *Model) renderChoiceItem(choice interface{}, idx int, contentStyle, mute
 		}
 	}
 
+	// 动态收集当前 Choice 中的可聚焦块
+	var availableBlocks []string
+	var thinking, cleanText string
 	if markdownText != "" {
-		thinking, cleanText := extractThinking(markdownText)
+		thinking, cleanText = extractThinking(markdownText)
 		if thinking != "" {
-			lines = append(lines, mutedStyle.Render("  🧠 思考过程:"))
-			renderedThinking := m.renderMarkdownFull(thinking)
-			for _, rl := range renderedThinking {
-				lines = append(lines, "    "+rl)
+			availableBlocks = append(availableBlocks, "thinking")
+		}
+		if cleanText != "" {
+			availableBlocks = append(availableBlocks, "content")
+		}
+	}
+	m.detailState.blocks = availableBlocks
+	if m.detailState.focusedBlock >= len(availableBlocks) {
+		m.detailState.focusedBlock = 0
+	}
+
+	if markdownText != "" {
+		// 智能默认折叠：如果行数 > 8 且没有手动展开/折叠记录，默认折叠
+		if _, exists := m.detailState.blockCollapsed["thinking"]; !exists && thinking != "" {
+			if strings.Count(thinking, "\n") > 8 {
+				m.detailState.blockCollapsed["thinking"] = true
 			}
-			lines = append(lines, "")
+		}
+		if _, exists := m.detailState.blockCollapsed["content"]; !exists && cleanText != "" {
+			if strings.Count(cleanText, "\n") > 8 {
+				m.detailState.blockCollapsed["content"] = true
+			}
+		}
+
+		if thinking != "" {
+			isFocused := len(availableBlocks) > 0 && availableBlocks[m.detailState.focusedBlock] == "thinking"
+			isCollapsed := m.detailState.blockCollapsed["thinking"]
+
+			var title string
+			if isFocused {
+				prefix := "▶ "
+				tip := " (按 Enter 展开，按 C 复制)"
+				if !isCollapsed {
+					tip = " (按 Enter 折叠，按 C 复制)"
+				}
+				title = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true).Render(prefix + "🧠 思考过程" + tip)
+			} else {
+				prefix := "  "
+				status := ""
+				if isCollapsed {
+					status = " [已折叠]"
+				}
+				title = mutedStyle.Render(prefix + "🧠 思考过程" + status + ":")
+			}
+			lines = append(lines, title)
+
+			if !isCollapsed {
+				renderedThinking := m.renderMarkdownFull(thinking)
+				for _, rl := range renderedThinking {
+					lines = append(lines, "    "+rl)
+				}
+				lines = append(lines, "")
+			} else {
+				lines = append(lines, "")
+			}
 		}
 
 		if cleanText != "" {
-			lines = append(lines, mutedStyle.Render("  💬 响应内容:"))
-			renderedLines := m.renderMarkdownFull(cleanText)
-			for _, rl := range renderedLines {
-				lines = append(lines, "    "+rl)
+			isFocused := len(availableBlocks) > 0 && availableBlocks[m.detailState.focusedBlock] == "content"
+			isCollapsed := m.detailState.blockCollapsed["content"]
+
+			var title string
+			if isFocused {
+				prefix := "▶ "
+				tip := " (按 Enter 展开，按 C 复制)"
+				if !isCollapsed {
+					tip = " (按 Enter 折叠，按 C 复制)"
+				}
+				title = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true).Render(prefix + "💬 响应内容" + tip)
+			} else {
+				prefix := "  "
+				status := ""
+				if isCollapsed {
+					status = " [已折叠]"
+				}
+				title = mutedStyle.Render(prefix + "💬 响应内容" + status + ":")
+			}
+			lines = append(lines, title)
+
+			if !isCollapsed {
+				renderedLines := m.renderMarkdownFull(cleanText)
+				for _, rl := range renderedLines {
+					lines = append(lines, "    "+rl)
+				}
+			} else {
+				lines = append(lines, "")
 			}
 		}
 	}
@@ -2956,4 +3210,13 @@ func renderLogsTableOld(resp *api.SpendLogsResponse, intervalVal int, newLogIDs 
 
 	sb.WriteString(fmt.Sprintf("\n%s\n", mutedStyle.Render(fmt.Sprintf("共 %d 条记录", len(*resp)))))
 	return sb.String()
+}
+
+// copyToClipboardOSC52 跨平台、无依赖的终端剪贴板复制命令 (利用现代终端的 OSC 52 复制指令协议)
+func copyToClipboardOSC52(text string) tea.Cmd {
+	return func() tea.Msg {
+		b64 := base64.StdEncoding.EncodeToString([]byte(text))
+		_, _ = os.Stdout.WriteString(fmt.Sprintf("\x1b]52;c;%s\x07", b64))
+		return nil
+	}
 }

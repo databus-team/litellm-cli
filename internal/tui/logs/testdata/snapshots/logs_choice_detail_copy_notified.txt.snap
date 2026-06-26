@@ -3,8 +3,10 @@
   [0] choice
   finish_reason: stop
   role: assistant
-▶ 🧠 思考过程 (按 Enter 折叠，按 C 复制)
+  🧠 思考过程:
     这里是模拟的思考过程，它使用了 粗体 进行测试。
 
-  💬 响应内容:
+▶ 💬 响应内容 (按 Enter 折叠，按 C 复制)
     你好，这部分是 Markdown 正文，包含一个 代码块。
+
+  ✨ 已将该块内容成功复制到剪贴板！
