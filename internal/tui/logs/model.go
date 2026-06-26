@@ -45,17 +45,17 @@ type Model struct {
 	quitting      bool
 	logData       *api.SpendLogsUIResponse
 	logDataOld    *api.SpendLogsResponse
-	seenLogIDs    map[string]bool // 已看到的日志ID
-	newLogIDs     map[string]bool // 本次新增的日志ID（用于高亮）
-	initialized   bool            // 是否已完成首次加载
-	width         int             // 窗口宽度
-	height        int             // 窗口高度
-	selectedIndex int             // 当前选中的日志索引
+	seenLogIDs    map[string]bool    // 已看到的日志ID
+	newLogIDs     map[string]bool    // 本次新增的日志ID（用于高亮）
+	initialized   bool               // 是否已完成首次加载
+	width         int                // 窗口宽度
+	height        int                // 窗口高度
+	selectedIndex int                // 当前选中的日志索引
 	selectedEntry *api.SpendLogEntry // 当前选中的日志条目（用于详情页）
-	viewMode      string          // "list" 或 "detail"
+	viewMode      string             // "list" 或 "detail"
 	detailData    map[string]interface{}
 	detailError   string
-	detailScroll  int // 详情视图滚动偏移量
+	detailScroll  int              // 详情视图滚动偏移量
 	detailState   *detailViewState // 详情视图状态（展开/折叠）
 }
 
@@ -68,8 +68,8 @@ func NewModel(client LogsClient, interval int, modelFilter string) *Model {
 		data:          "加载中...",
 		seenLogIDs:    make(map[string]bool),
 		newLogIDs:     make(map[string]bool),
-		width:         120,  // 默认宽度
-		height:        40,   // 默认高度
+		width:         120,    // 默认宽度
+		height:        40,     // 默认高度
 		viewMode:      "list", // 默认视图模式
 		selectedIndex: 0,
 	}
@@ -471,21 +471,21 @@ func (m *Model) View() string {
 
 // detailViewState 保存详情视图的状态
 type detailViewState struct {
-	activeTab            string              // 当前 tab: "main", "system", "tools", "messages", "choices"
-	expandedSections     map[string]bool     // 展开的区块
-	focusedSection       int                 // 当前聚焦的区块索引
-	selectedItem         int                 // 选中的数组项索引（用于列表tab）
-	scrollOffset         int                 // 滚动偏移量
-	markdownViewMode     string              // "raw" 或 "rendered" - markdown 查看模式
-	markdownScrollOffset int                 // markdown 渲染滚动偏移量
-	itemDetailMode       bool                // 是否处于查看某项详情的模式
-	currentItemIndex     int                 // 当前查看详情的项索引
-	selectedStartLine    int                 // 选中项在 lines 中的起始行
-	selectedEndLine      int                 // 选中项在 lines 中的结束行
-	focusedBlock         int                 // 当前聚焦的 Block 索引 (如 0 表示思考过程，1 表示响应内容)
-	blocks               []string            // 详情中当前可聚焦的所有 Block 列表 (如 ["thinking", "content"])
-	blockCollapsed       map[string]bool     // 记录各个 Block 的展开/折叠状态
-	copiedNotification   string              // 复制成功时的临时通知提示文本
+	activeTab            string          // 当前 tab: "main", "system", "tools", "messages", "choices"
+	expandedSections     map[string]bool // 展开的区块
+	focusedSection       int             // 当前聚焦的区块索引
+	selectedItem         int             // 选中的数组项索引（用于列表tab）
+	scrollOffset         int             // 滚动偏移量
+	markdownViewMode     string          // "raw" 或 "rendered" - markdown 查看模式
+	markdownScrollOffset int             // markdown 渲染滚动偏移量
+	itemDetailMode       bool            // 是否处于查看某项详情的模式
+	currentItemIndex     int             // 当前查看详情的项索引
+	selectedStartLine    int             // 选中项在 lines 中的起始行
+	selectedEndLine      int             // 选中项在 lines 中的结束行
+	focusedBlock         int             // 当前聚焦的 Block 索引 (如 0 表示思考过程，1 表示响应内容)
+	blocks               []string        // 详情中当前可聚焦的所有 Block 列表 (如 ["thinking", "content"])
+	blockCollapsed       map[string]bool // 记录各个 Block 的展开/折叠状态
+	copiedNotification   string          // 复制成功时的临时通知提示文本
 }
 
 func (m *Model) renderDetailView() string {
@@ -990,7 +990,7 @@ func (m *Model) renderLastMessagePreview(proxyReq map[string]interface{}, mutedS
 	rendered := m.renderMarkdownFull(content)
 	lines = append(lines, "")
 	lines = append(lines, mutedStyle.Render(fmt.Sprintf("  💬 最后消息 (%s):", role)))
-	
+
 	maxMsgLines := 3 // 限制最多展示3行，超出省略，防止内容过长撑破主视图卡片
 	if len(rendered) <= maxMsgLines {
 		for _, rl := range rendered {
@@ -1047,10 +1047,10 @@ func (m *Model) renderMainView(proxyReq, respData map[string]interface{}, cardSt
 		leftCol = append(leftCol, "")
 
 		requestOptions := []struct {
-			key      string
-			icon     string
-			label    string
-			count    int
+			key   string
+			icon  string
+			label string
+			count int
 		}{
 			{"system", "📦", "system", systemCount},
 			{"tools", "🔧", "tools", toolsCount},
@@ -1171,10 +1171,10 @@ func (m *Model) renderMainView(proxyReq, respData map[string]interface{}, cardSt
 		requestLines = append(requestLines, "")
 
 		requestOptions := []struct {
-			key      string
-			icon     string
-			label    string
-			count    int
+			key   string
+			icon  string
+			label string
+			count int
 		}{
 			{"system", "📦", "system", systemCount},
 			{"tools", "🔧", "tools", toolsCount},
@@ -1599,10 +1599,10 @@ func (m *Model) renderMessageSummary(msg interface{}, idx int, contentStyle, mut
 	previewContent := extractMessagePreview(msg)
 
 	roleIcon := map[string]string{
-		"system":   "📦",
-		"user":     "👤",
+		"system":    "📦",
+		"user":      "👤",
 		"assistant": "🤖",
-		"tool":     "🔧",
+		"tool":      "🔧",
 	}[role]
 	if roleIcon == "" {
 		roleIcon = "💬"
@@ -1830,7 +1830,7 @@ func (m *Model) renderMessageItem(msg interface{}, idx int, contentStyle, mutedS
 						}
 					}
 				}
-				
+
 				if tcID != "" {
 					lines = append(lines, valueStyle.Render(fmt.Sprintf("    - Call: %s (ID: %s)", fnName, tcID)))
 				} else {
@@ -2617,7 +2617,7 @@ func (m *Model) renderChoiceItem(choice interface{}, idx int, contentStyle, mute
 						}
 					}
 				}
-				
+
 				if tcID != "" {
 					lines = append(lines, valueStyle.Render(fmt.Sprintf("    - Call: %s (ID: %s)", fnName, tcID)))
 				} else {
@@ -3110,8 +3110,6 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("86"))
 	selectedMutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("86")).Bold(true)
 
-
-
 	if width <= 0 {
 		width = 120
 	}
@@ -3342,15 +3340,7 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 
 		var timeStyle, statusStyle, spendStyle, latencyStyle, tokensStyle, modelStyle, tagStyle lipgloss.Style
 
-		if isSelected {
-			timeStyle = selectedStyle
-			statusStyle = selectedStyle
-			spendStyle = selectedStyle
-			latencyStyle = selectedStyle
-			tokensStyle = selectedStyle
-			modelStyle = selectedStyle
-			tagStyle = selectedMutedStyle
-		} else if isNew {
+		if isNew {
 			timeStyle = newHighlightStyle
 			statusStyle = newHighlightStyle
 			spendStyle = newHighlightStyle
@@ -3358,6 +3348,14 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 			tokensStyle = newHighlightStyle
 			modelStyle = newHighlightStyle
 			tagStyle = newHighlightMutedStyle
+		} else if isSelected {
+			timeStyle = selectedStyle
+			statusStyle = selectedStyle
+			spendStyle = selectedStyle
+			latencyStyle = selectedStyle
+			tokensStyle = selectedStyle
+			modelStyle = selectedStyle
+			tagStyle = selectedMutedStyle
 		} else if entry.Status != "success" && entry.ErrorMessage != "" {
 			timeStyle = contentStyle
 			statusStyle = errorStyle
