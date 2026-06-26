@@ -104,7 +104,7 @@ func TestLogsTUI_HappyPath(t *testing.T) {
 				map[string]interface{}{
 					"message": map[string]interface{}{
 						"role":    "assistant",
-						"content": "你好",
+						"content": "<think>\n这里是模拟的思考过程，它使用了 **粗体** 进行测试。\n</think>\n你好，这部分是 **Markdown 正文**，包含一个 `代码块`。",
 					},
 					"finish_reason": "stop",
 				},
@@ -204,6 +204,44 @@ func TestLogsTUI_HappyPath(t *testing.T) {
 		t.Fatal("expected non-nil detailData")
 	}
 	testutils.AssertTUISnapshot(t, "logs_detail_view", normalizeOutput(m.View()))
+
+	// 4.5. 模拟将焦点移至 choices 卡片并切入 choices 标签页
+	// 初始为 0 (system)，按 3 次 Tab 将 focusedSection 移动到 3 (choices)
+	for i := 0; i < 3; i++ {
+		newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m = newModel.(*Model)
+	}
+	// 按 Enter 键切入 choices 标签页列表
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(*Model)
+	if m.detailState.activeTab != "choices" {
+		t.Fatalf("expected activeTab to be 'choices', got '%s'", m.detailState.activeTab)
+	}
+	// 验证 Choices Summary 列表状态，并保存快照
+	testutils.AssertTUISnapshot(t, "logs_choices_list", normalizeOutput(m.View()))
+
+	// 4.6. 按 Enter 进入第一个 Choice 的单项详情页面
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = newModel.(*Model)
+	if !m.detailState.itemDetailMode {
+		t.Fatal("expected itemDetailMode to be true after pressing Enter on choices list")
+	}
+	// 验证 Choice 详情视图（此时包含了用 Markdown 渲染的“思考过程”和“正文内容”），并保存快照！
+	testutils.AssertTUISnapshot(t, "logs_choice_detail_view", normalizeOutput(m.View()))
+
+	// 按 ESC 退出单项详情，回到 Choices 列表
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(*Model)
+	if m.detailState.itemDetailMode {
+		t.Fatal("expected itemDetailMode to be false after pressing ESC on choice detail")
+	}
+
+	// 按 ESC 退出 Choices 列表，回到 main 视图
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = newModel.(*Model)
+	if m.detailState.activeTab != "main" {
+		t.Fatalf("expected activeTab to return to 'main', got '%s'", m.detailState.activeTab)
+	}
 
 	// 5. 投递 'esc' 键盘消息，退回列表视图
 	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})

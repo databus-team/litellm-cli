@@ -677,13 +677,24 @@ func (m *Model) getSingleChoicePreview(singleChoice map[string]interface{}, mute
 		lines = append(lines, mutedStyle.Render(fmt.Sprintf("  🏁 结束原因: %s", fr)))
 	}
 
-	// 2. 获取 message
+	// 2. 获取 message (同时兼容 delta 字段以完美支持流式输出预览)
 	msg, _ := singleChoice["message"].(map[string]interface{})
+	if msg == nil {
+		msg, _ = singleChoice["delta"].(map[string]interface{})
+	}
+
 	if msg == nil {
 		if text, ok := singleChoice["text"].(string); ok && text != "" {
 			text = strings.TrimSpace(text)
 			if len(text) <= 150 {
-				lines = append(lines, fmt.Sprintf("  💬 内容: %s", text))
+				rendered := m.renderMarkdownFull(text)
+				for i, rl := range rendered {
+					if i == 0 {
+						lines = append(lines, "  💬 内容: "+rl)
+					} else {
+						lines = append(lines, "          "+rl)
+					}
+				}
 			} else {
 				lines = append(lines, mutedStyle.Render(fmt.Sprintf("  💬 内容: %s... [长文本已折叠，按 Enter/Tab 切换 choices 查看全文]", truncate(text, 60))))
 			}
@@ -703,7 +714,15 @@ func (m *Model) getSingleChoicePreview(singleChoice map[string]interface{}, mute
 
 		if cleanText != "" {
 			if len(cleanText) <= 150 {
-				lines = append(lines, fmt.Sprintf("  💬 内容: %s", cleanText))
+				// 使用 Markdown 渲染较短的内容，横向拉满并展现精美高亮
+				rendered := m.renderMarkdownFull(cleanText)
+				for i, rl := range rendered {
+					if i == 0 {
+						lines = append(lines, "  💬 内容: "+rl)
+					} else {
+						lines = append(lines, "          "+rl)
+					}
+				}
 			} else {
 				lines = append(lines, mutedStyle.Render(fmt.Sprintf("  💬 内容: %s... [长文本已折叠，按 Enter/Tab 切换 choices 查看全文]", truncate(cleanText, 60))))
 			}
@@ -1227,6 +1246,86 @@ func extractMessagePreview(msg interface{}) string {
 	return ""
 }
 
+// extractMessageContentFull 统一且健壮地从 message 或 delta 结构体中提取出完整的 markdown 文本
+func extractMessageContentFull(msg interface{}) string {
+	if msg == nil {
+		return ""
+	}
+	if s, ok := msg.(string); ok {
+		return s
+	}
+	msgMap, ok := msg.(map[string]interface{})
+	if !ok {
+		if jsonBytes, err := json.Marshal(msg); err == nil {
+			return string(jsonBytes)
+		}
+		return ""
+	}
+
+	contentRaw := msgMap["content"]
+	if contentRaw == nil {
+		if text, ok := msgMap["text"].(string); ok && text != "" {
+			return text
+		}
+		return ""
+	}
+
+	// 1. 如果 content 是普通的 string
+	if s, ok := contentRaw.(string); ok {
+		return s
+	}
+
+	// 2. 如果 content 是对象数组 ([]interface{})
+	if list, ok := contentRaw.([]interface{}); ok {
+		var parts []string
+		for _, item := range list {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				itemType, _ := itemMap["type"].(string)
+				if text, ok := itemMap["text"].(string); ok && text != "" {
+					parts = append(parts, text)
+				} else if itemType == "tool_use" || itemType == "tool_call" {
+					toolName, _ := itemMap["name"].(string)
+					toolID, _ := itemMap["id"].(string)
+					var inputStr string
+					if input, ok := itemMap["input"].(map[string]interface{}); ok {
+						if bytes, err := json.Marshal(input); err == nil {
+							inputStr = string(bytes)
+						}
+					} else if args, ok := itemMap["arguments"].(string); ok {
+						inputStr = args
+					}
+					parts = append(parts, fmt.Sprintf("\n\n🔧 **[Tool Use: %s (ID: %s)]**\n`input: %s`\n\n", toolName, toolID, inputStr))
+				} else if itemType == "image" {
+					parts = append(parts, "\n\n🖼️ **[Image Block]**\n\n")
+				} else {
+					if bytes, err := json.Marshal(itemMap); err == nil {
+						parts = append(parts, fmt.Sprintf("\n\n```json\n%s\n```\n\n", string(bytes)))
+					}
+				}
+			} else if s, ok := item.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, "\n\n")
+	}
+
+	// 3. 如果 content 是单对象 map
+	if cMap, ok := contentRaw.(map[string]interface{}); ok {
+		if text, ok := cMap["text"].(string); ok && text != "" {
+			return text
+		}
+		if bytes, err := json.MarshalIndent(cMap, "", "  "); err == nil {
+			return fmt.Sprintf("```json\n%s\n```", string(bytes))
+		}
+	}
+
+	// 4. 兜底处理
+	if bytes, err := json.MarshalIndent(contentRaw, "", "  "); err == nil {
+		return fmt.Sprintf("```json\n%s\n```", string(bytes))
+	}
+	return ""
+}
+
 func extractThinking(text string) (thinking string, cleanText string) {
 	startIdx := strings.Index(text, "<think>")
 	if startIdx == -1 {
@@ -1320,56 +1419,16 @@ func (m *Model) renderMessageItem(msg interface{}, idx int, contentStyle, mutedS
 	var lines []string
 	lines = append(lines, groupStyle.Render(fmt.Sprintf("  [%d] %s", idx, role)))
 
-	var markdownText string
-
-	rawContent := msgMap["content"]
-	if rawContent != nil {
-		if s, ok := rawContent.(string); ok {
-			markdownText = s
-		} else if list, ok := rawContent.([]interface{}); ok {
-			var parts []string
-			for _, item := range list {
-				if itemMap, ok := item.(map[string]interface{}); ok {
-					itemType, _ := itemMap["type"].(string)
-					if text, ok := itemMap["text"].(string); ok && text != "" {
-						parts = append(parts, text)
-					} else if itemType == "tool_use" {
-						toolName, _ := itemMap["name"].(string)
-						toolID, _ := itemMap["id"].(string)
-						var inputStr string
-						if input, ok := itemMap["input"].(map[string]interface{}); ok {
-							if bytes, err := json.Marshal(input); err == nil {
-								inputStr = string(bytes)
-							}
-						}
-						parts = append(parts, fmt.Sprintf("\n🔧 **[Tool Use: %s (ID: %s)]**\n`input: %s`\n", toolName, toolID, inputStr))
-					} else if itemType == "image" {
-						parts = append(parts, "\n🖼️ **[Image Block]**\n")
-					} else {
-						if bytes, err := json.Marshal(itemMap); err == nil {
-							parts = append(parts, fmt.Sprintf("\n```json\n%s\n```\n", string(bytes)))
-						}
-					}
-				} else if s, ok := item.(string); ok {
-					parts = append(parts, s)
-				}
-			}
-			markdownText = strings.Join(parts, "\n\n")
-		} else {
-			if bytes, err := json.MarshalIndent(rawContent, "", "  "); err == nil {
-				markdownText = fmt.Sprintf("```json\n%s\n```", string(bytes))
-			}
-		}
-	}
+	// 使用统一且健壮的提取逻辑，支持多模态 blocks、单对象 map 等
+	markdownText := extractMessageContentFull(msgMap)
 
 	if markdownText != "" {
 		thinking, cleanText := extractThinking(markdownText)
 		if thinking != "" {
 			lines = append(lines, mutedStyle.Render("  🧠 思考过程:"))
-			thinkingStyle := lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("242"))
 			renderedThinking := m.renderMarkdownFull(thinking)
 			for _, rl := range renderedThinking {
-				lines = append(lines, "    "+thinkingStyle.Render(rl))
+				lines = append(lines, "    "+rl)
 			}
 			lines = append(lines, "")
 		}
@@ -2007,40 +2066,26 @@ func (m *Model) renderChoiceItem(choice interface{}, idx int, contentStyle, mute
 	var markdownText string
 	var toolCalls []interface{}
 
-	if text, ok := c["text"].(string); ok && text != "" {
-		markdownText = text
+	// 统一获取 message (兼容流式输出中的 delta 字段以完美渲染流式日志)
+	msg, ok := c["message"].(map[string]interface{})
+	if !ok {
+		msg, _ = c["delta"].(map[string]interface{})
 	}
 
-	if msg, ok := c["message"].(map[string]interface{}); ok {
+	if msg != nil {
 		if role, ok := msg["role"].(string); ok {
 			lines = append(lines, valueStyle.Render("  role: "+role))
 		}
-		rawContent := msg["content"]
-		if rawContent != nil {
-			if s, ok := rawContent.(string); ok {
-				markdownText = s
-			} else if list, ok := rawContent.([]interface{}); ok {
-				var parts []string
-				for _, item := range list {
-					if itemMap, ok := item.(map[string]interface{}); ok {
-						if text, ok := itemMap["text"].(string); ok && text != "" {
-							parts = append(parts, text)
-						} else if bytes, err := json.Marshal(itemMap); err == nil {
-							parts = append(parts, fmt.Sprintf("\n```json\n%s\n```\n", string(bytes)))
-						}
-					} else if s, ok := item.(string); ok {
-						parts = append(parts, s)
-					}
-				}
-				markdownText = strings.Join(parts, "\n\n")
-			} else {
-				if bytes, err := json.MarshalIndent(rawContent, "", "  "); err == nil {
-					markdownText = fmt.Sprintf("```json\n%s\n```", string(bytes))
-				}
-			}
-		}
+		// 使用统一且健壮的提取逻辑，完美兼容单对象 map、多模态 block 等复杂情况
+		markdownText = extractMessageContentFull(msg)
+
 		if tc, ok := msg["tool_calls"].([]interface{}); ok && len(tc) > 0 {
 			toolCalls = tc
+		}
+	} else {
+		// 兼容非 chat completion 的 text 字段
+		if text, ok := c["text"].(string); ok && text != "" {
+			markdownText = text
 		}
 	}
 
@@ -2048,10 +2093,9 @@ func (m *Model) renderChoiceItem(choice interface{}, idx int, contentStyle, mute
 		thinking, cleanText := extractThinking(markdownText)
 		if thinking != "" {
 			lines = append(lines, mutedStyle.Render("  🧠 思考过程:"))
-			thinkingStyle := lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("242"))
 			renderedThinking := m.renderMarkdownFull(thinking)
 			for _, rl := range renderedThinking {
-				lines = append(lines, "    "+thinkingStyle.Render(rl))
+				lines = append(lines, "    "+rl)
 			}
 			lines = append(lines, "")
 		}
