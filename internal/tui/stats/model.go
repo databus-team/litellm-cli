@@ -308,7 +308,15 @@ func (m *Model) renderCounterContent(width int) string {
 		cols = 1
 	}
 
-	cardWidth := 22
+	// 动态计算卡片宽度：让卡片横向铺满 width。
+	// 每个卡片的 border 占用 2 个字符，所以 cardStyle.Width 应该设为 (width / cols) - 2。
+	cardWidth := (width / cols) - 2
+	if cardWidth < 20 {
+		cardWidth = 20
+	}
+	if cardWidth > 35 {
+		cardWidth = 35
+	}
 	cardHeight := 4
 
 	for row := 0; row < len(metrics); row += cols {
@@ -349,9 +357,13 @@ func (m *Model) renderBarContent(width int) string {
 		}
 	}
 
-	barMaxWidth := 30
-	if width < 80 {
-		barMaxWidth = 15
+	// 动态计算柱状图的最大宽度，排除两旁的文字所占宽度，让柱状图尽量占满屏幕
+	barMaxWidth := width - 26
+	if barMaxWidth < 10 {
+		barMaxWidth = 10
+	}
+	if barMaxWidth > 80 {
+		barMaxWidth = 80
 	}
 
 	for i, r := range m.data {
@@ -390,13 +402,13 @@ func (m *Model) renderBarContent(width int) string {
 
 	if m.selectedBarIndex >= 0 && m.selectedBarIndex < len(m.data) {
 		sb.WriteString("\n")
-		sb.WriteString(m.renderDetailPanel(m.data[m.selectedBarIndex]))
+		sb.WriteString(m.renderDetailPanel(m.data[m.selectedBarIndex], width))
 	}
 
 	return sb.String()
 }
 
-func (m *Model) renderDetailPanel(data api.UserDailyActivity) string {
+func (m *Model) renderDetailPanel(data api.UserDailyActivity, width int) string {
 	var sb strings.Builder
 
 	panelStyle := lipgloss.NewStyle().
@@ -423,7 +435,16 @@ func (m *Model) renderDetailPanel(data api.UserDailyActivity) string {
 	content += keyStyle.Render("✍️ Completion: ") + valueStyle.Render(formatTokens(data.Metrics.CompletionTokens)) + "\n"
 	content += keyStyle.Render("📊 总 Tokens: ") + valueStyle.Render(formatTokens(data.Metrics.TotalTokens))
 
-	sb.WriteString(panelStyle.Width(30).Render(content))
+	// 动态计算详情面板的宽度
+	panelWidth := int(float64(width) * 0.7)
+	if panelWidth < 30 {
+		panelWidth = 30
+	}
+	if panelWidth > 50 {
+		panelWidth = 50
+	}
+
+	sb.WriteString(panelStyle.Width(panelWidth).Render(content))
 
 	return sb.String()
 }

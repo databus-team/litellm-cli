@@ -1063,9 +1063,14 @@ func (m *Model) renderMessageSummary(msg interface{}, idx int, contentStyle, mut
 		style = contentStyle.Bold(true)
 	}
 
+	previewLen := m.width - 25
+	if previewLen < 20 {
+		previewLen = 20
+	}
+
 	summary := roleIcon + " " + role
 	if content != "" {
-		summary += ": " + truncate(content, 50)
+		summary += ": " + truncate(content, previewLen)
 	}
 	if len(toolCalls) > 0 {
 		summary += fmt.Sprintf(" [+%d tool_calls]", len(toolCalls))
@@ -1141,13 +1146,18 @@ func (m *Model) renderToolSummary(tool interface{}, idx int, contentStyle, muted
 		return []string{mutedStyle.Render(fmt.Sprintf("  [%d] 无效数据类型: %T", idx, tool))}
 	}
 
+	previewLen := m.width - 25
+	if previewLen < 20 {
+		previewLen = 20
+	}
+
 	var name, desc string
 	// 1. 尝试从最外层读取
 	if n, ok := toolMap["name"].(string); ok {
 		name = n
 	}
 	if d, ok := toolMap["description"].(string); ok {
-		desc = truncate(d, 40)
+		desc = truncate(d, previewLen)
 	}
 
 	// 2. 尝试从嵌套 of function 字段读取并覆盖
@@ -1156,7 +1166,7 @@ func (m *Model) renderToolSummary(tool interface{}, idx int, contentStyle, muted
 			name = n
 		}
 		if d, ok := fn["description"].(string); ok {
-			desc = truncate(d, 40)
+			desc = truncate(d, previewLen)
 		}
 	}
 
@@ -1170,7 +1180,7 @@ func (m *Model) renderToolSummary(tool interface{}, idx int, contentStyle, muted
 	// 4. 如果最后什么都没读到，直接使用简短的 JSON 作为摘要以防空白
 	if name == "" && desc == "" {
 		if jsonBytes, err := json.Marshal(toolMap); err == nil {
-			name = truncate(string(jsonBytes), 50)
+			name = truncate(string(jsonBytes), previewLen)
 		} else {
 			name = "未知工具"
 		}
@@ -1210,9 +1220,14 @@ func (m *Model) renderSystemSummary(sys interface{}, idx int, contentStyle, mute
 		style = contentStyle.Bold(true)
 	}
 
+	previewLen := m.width - 30
+	if previewLen < 20 {
+		previewLen = 20
+	}
+
 	summary := fmt.Sprintf("system[%d] (%s)", idx, sysType)
 	if text != "" {
-		summary += ": " + truncate(text, 40)
+		summary += ": " + truncate(text, previewLen)
 	}
 
 	return []string{style.Render(prefix + summary)}
@@ -1975,7 +1990,7 @@ func (m *Model) renderListView() string {
 			}
 			filteredData = filtered
 		}
-		content.WriteString(renderLogsTable(filteredData, int(m.logData.Total), m.newLogIDs, availableRows, m.selectedIndex))
+		content.WriteString(renderLogsTable(filteredData, int(m.logData.Total), m.newLogIDs, availableRows, m.selectedIndex, m.width))
 	} else if m.logDataOld != nil && len(*m.logDataOld) > 0 {
 		content.WriteString(renderLogsTableOld(m.logDataOld, m.interval, m.newLogIDs, availableRows, m.selectedIndex))
 	} else {
@@ -2147,7 +2162,7 @@ func formatLocalTime(utcTime string) string {
 	return utcTime
 }
 
-func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]bool, maxRows int, selectedIndex int) string {
+func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]bool, maxRows int, selectedIndex int, width int) string {
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
@@ -2159,17 +2174,39 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("86"))
 	selectedMutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("86")).Bold(true)
 
-	padRight := func(s string, width int) string {
-		w := runewidth.StringWidth(s)
-		if w >= width {
-			return s
-		}
-		return s + strings.Repeat(" ", width-w)
+
+
+	if width <= 0 {
+		width = 120
 	}
 
-	var sb strings.Builder
+	// 限制允许列分配的宽度，留出 6 个空格作为列与列之间的间隔
+	allowedWidth := width - 6
+	if allowedWidth < 50 {
+		allowedWidth = 50
+	}
 
-	colWidths := struct {
+	// 最小列宽定义
+	minWidths := struct {
+		time    int
+		status  int
+		spend   int
+		latency int
+		tokens  int
+		model   int
+		tags    int
+	}{
+		time:    16,
+		status:  4,
+		spend:   6,
+		latency: 6,
+		tokens:  8,
+		model:   10,
+		tags:    8,
+	}
+
+	// 统计每一列内容的最大宽度
+	contentWidths := struct {
 		time    int
 		status  int
 		spend   int
@@ -2189,19 +2226,19 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 
 	for _, entry := range data {
 		startTime := formatLocalTime(entry.StartTime)
-		colWidths.time = max(colWidths.time, runewidth.StringWidth(startTime))
+		contentWidths.time = max(contentWidths.time, runewidth.StringWidth(startTime))
 
 		status := "✓"
 		if entry.Status != "success" && entry.ErrorMessage != "" {
 			status = "✗"
 		}
-		colWidths.status = max(colWidths.status, runewidth.StringWidth(status))
+		contentWidths.status = max(contentWidths.status, runewidth.StringWidth(status))
 
 		spendStr := "-"
 		if entry.TotalSpend > 0 {
 			spendStr = fmt.Sprintf("$%.2f", entry.TotalSpend)
 		}
-		colWidths.spend = max(colWidths.spend, runewidth.StringWidth(spendStr))
+		contentWidths.spend = max(contentWidths.spend, runewidth.StringWidth(spendStr))
 
 		latencyStr := "-"
 		if entry.StartTime != "" && entry.EndTime != "" {
@@ -2216,19 +2253,19 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 				}
 			}
 		}
-		colWidths.latency = max(colWidths.latency, runewidth.StringWidth(latencyStr))
+		contentWidths.latency = max(contentWidths.latency, runewidth.StringWidth(latencyStr))
 
 		tokensStr := "-"
 		if entry.TotalTokens > 0 {
 			tokensStr = fmt.Sprintf("%d(%d+%d)", entry.TotalTokens, entry.PromptTokens, entry.CompletionTokens)
 		}
-		colWidths.tokens = max(colWidths.tokens, runewidth.StringWidth(tokensStr))
+		contentWidths.tokens = max(contentWidths.tokens, runewidth.StringWidth(tokensStr))
 
 		model := entry.ModelGroup
 		if model == "" {
 			model = entry.Model
 		}
-		colWidths.model = max(colWidths.model, runewidth.StringWidth(model))
+		contentWidths.model = max(contentWidths.model, runewidth.StringWidth(model))
 
 		tag := ""
 		if len(entry.RequestTags) > 0 {
@@ -2245,20 +2282,69 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 				tag = tags[0]
 			}
 		}
-		colWidths.tags = max(colWidths.tags, runewidth.StringWidth(tag))
+		contentWidths.tags = max(contentWidths.tags, runewidth.StringWidth(tag))
 	}
 
-	sb.WriteString(headerStyle.Render(fmt.Sprintf("%s %s %s %s %s %s %s",
-		padRight("时间", colWidths.time),
-		padRight("状态", colWidths.status),
-		padRight("费用", colWidths.spend),
-		padRight("耗时", colWidths.latency),
-		padRight("Tokens", colWidths.tokens),
-		padRight("模型", colWidths.model),
-		padRight("Tags", colWidths.tags))) + "\n")
+	// 计算每列的最终分配宽度
+	var w_time, w_status, w_spend, w_latency, w_tokens, w_model, w_tags int
 
-	totalWidth := colWidths.time + colWidths.status + colWidths.spend + colWidths.latency + colWidths.tokens + colWidths.model + colWidths.tags + 6
-	sb.WriteString(mutedStyle.Render(strings.Repeat("─", totalWidth)) + "\n")
+	// 前 5 列为内容相对固定的列，我们按 max(minWidth, contentWidth) 分配
+	w_time = max(minWidths.time, contentWidths.time)
+	w_status = max(minWidths.status, contentWidths.status)
+	w_spend = max(minWidths.spend, contentWidths.spend)
+	w_latency = max(minWidths.latency, contentWidths.latency)
+	w_tokens = max(minWidths.tokens, contentWidths.tokens)
+
+	fixedWidthSum := w_time + w_status + w_spend + w_latency + w_tokens
+
+	if allowedWidth-fixedWidthSum >= minWidths.model+minWidths.tags {
+		// 剩余宽度分配给 model 和 tags
+		remainingWidth := allowedWidth - fixedWidthSum
+		w_model = max(minWidths.model, int(float64(remainingWidth)*0.60))
+		w_tags = max(minWidths.tags, remainingWidth-w_model)
+	} else {
+		// 屏幕太窄，压缩前 5 列到它们的最小宽度
+		w_time = minWidths.time
+		w_status = minWidths.status
+		w_spend = minWidths.spend
+		w_latency = minWidths.latency
+		w_tokens = minWidths.tokens
+
+		fixedWidthSum = w_time + w_status + w_spend + w_latency + w_tokens
+		remainingWidth := allowedWidth - fixedWidthSum
+		w_model = max(minWidths.model, int(float64(remainingWidth)*0.60))
+		w_tags = max(minWidths.tags, remainingWidth-w_model)
+	}
+
+	// 单元格格式化辅助函数：既保证总宽，又在溢出时优雅截断
+	formatCell := func(s string, width int) string {
+		w := runewidth.StringWidth(s)
+		if w == width {
+			return s
+		}
+		if w > width {
+			if width > 3 {
+				return runewidth.Truncate(s, width-2, "..")
+			}
+			return runewidth.Truncate(s, width, "")
+		}
+		return s + strings.Repeat(" ", width-w)
+	}
+
+	var sb strings.Builder
+
+	// 渲染表头
+	sb.WriteString(headerStyle.Render(fmt.Sprintf("%s %s %s %s %s %s %s",
+		formatCell("时间", w_time),
+		formatCell("状态", w_status),
+		formatCell("费用", w_spend),
+		formatCell("耗时", w_latency),
+		formatCell("Tokens", w_tokens),
+		formatCell("模型", w_model),
+		formatCell("Tags", w_tags))) + "\n")
+
+	// 华丽的分隔线
+	sb.WriteString(mutedStyle.Render(strings.Repeat("─", width)) + "\n")
 
 	rowCount := 0
 	for i, entry := range data {
@@ -2355,13 +2441,13 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 		}
 
 		sb.WriteString(fmt.Sprintf("%s %s %s %s %s %s %s\n",
-			timeStyle.Render(padRight(startTime, colWidths.time)),
-			statusStyle.Render(padRight(status, colWidths.status)),
-			spendStyle.Render(padRight(spendStr, colWidths.spend)),
-			latencyStyle.Render(padRight(latencyStr, colWidths.latency)),
-			tokensStyle.Render(padRight(tokensStr, colWidths.tokens)),
-			modelStyle.Render(padRight(model, colWidths.model)),
-			tagStyle.Render(padRight(tag, colWidths.tags))))
+			timeStyle.Render(formatCell(startTime, w_time)),
+			statusStyle.Render(formatCell(status, w_status)),
+			spendStyle.Render(formatCell(spendStr, w_spend)),
+			latencyStyle.Render(formatCell(latencyStr, w_latency)),
+			tokensStyle.Render(formatCell(tokensStr, w_tokens)),
+			modelStyle.Render(formatCell(model, w_model)),
+			tagStyle.Render(formatCell(tag, w_tags))))
 	}
 
 	sb.WriteString(fmt.Sprintf("\n%s\n", mutedStyle.Render(fmt.Sprintf("共 %d 条记录 (总 %d)", len(data), total))))
