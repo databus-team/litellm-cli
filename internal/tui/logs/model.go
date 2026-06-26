@@ -691,14 +691,22 @@ func (m *Model) getSingleChoicePreview(singleChoice map[string]interface{}, mute
 		return lines
 	}
 
-	// 3. 提取 content (使用我们之前强大的 extractMessagePreview)
+	// 3. 提取 content 并智能分流渲染思考链与正文预览
 	content := extractMessagePreview(msg)
 	if content != "" {
 		content = strings.TrimSpace(content)
-		if len(content) <= 150 {
-			lines = append(lines, fmt.Sprintf("  💬 内容: %s", content))
-		} else {
-			lines = append(lines, mutedStyle.Render(fmt.Sprintf("  💬 内容: %s... [长文本已折叠，按 Enter/Tab 切换 choices 查看全文]", truncate(content, 60))))
+		thinking, cleanText := extractThinking(content)
+
+		if thinking != "" {
+			lines = append(lines, mutedStyle.Render("  🧠 思考过程: [已折叠] (按 Enter/Tab 切换 choices 查看完整思维链)"))
+		}
+
+		if cleanText != "" {
+			if len(cleanText) <= 150 {
+				lines = append(lines, fmt.Sprintf("  💬 内容: %s", cleanText))
+			} else {
+				lines = append(lines, mutedStyle.Render(fmt.Sprintf("  💬 内容: %s... [长文本已折叠，按 Enter/Tab 切换 choices 查看全文]", truncate(cleanText, 60))))
+			}
 		}
 	}
 
@@ -1219,6 +1227,24 @@ func extractMessagePreview(msg interface{}) string {
 	return ""
 }
 
+func extractThinking(text string) (thinking string, cleanText string) {
+	startIdx := strings.Index(text, "<think>")
+	if startIdx == -1 {
+		return "", text
+	}
+
+	endIdx := strings.Index(text, "</think>")
+	if endIdx == -1 {
+		thinking = text[startIdx+7:]
+		cleanText = text[:startIdx]
+		return strings.TrimSpace(thinking), strings.TrimSpace(cleanText)
+	}
+
+	thinking = text[startIdx+7 : endIdx]
+	cleanText = text[:startIdx] + text[endIdx+8:]
+	return strings.TrimSpace(thinking), strings.TrimSpace(cleanText)
+}
+
 func (m *Model) renderMessageSummary(msg interface{}, idx int, contentStyle, mutedStyle lipgloss.Style, focused bool) []string {
 	msgMap, ok := msg.(map[string]interface{})
 	if !ok {
@@ -1337,9 +1363,22 @@ func (m *Model) renderMessageItem(msg interface{}, idx int, contentStyle, mutedS
 	}
 
 	if markdownText != "" {
-		renderedLines := m.renderMarkdownFull(markdownText)
-		for _, rl := range renderedLines {
-			lines = append(lines, "  "+rl)
+		thinking, cleanText := extractThinking(markdownText)
+		if thinking != "" {
+			lines = append(lines, mutedStyle.Render("  🧠 思考过程:"))
+			thinkingStyle := lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("242"))
+			renderedThinking := m.renderMarkdownFull(thinking)
+			for _, rl := range renderedThinking {
+				lines = append(lines, "    "+thinkingStyle.Render(rl))
+			}
+			lines = append(lines, "")
+		}
+
+		if cleanText != "" {
+			renderedLines := m.renderMarkdownFull(cleanText)
+			for _, rl := range renderedLines {
+				lines = append(lines, "  "+rl)
+			}
 		}
 	}
 
@@ -2006,10 +2045,23 @@ func (m *Model) renderChoiceItem(choice interface{}, idx int, contentStyle, mute
 	}
 
 	if markdownText != "" {
-		lines = append(lines, "  content:")
-		renderedLines := m.renderMarkdownFull(markdownText)
-		for _, rl := range renderedLines {
-			lines = append(lines, "    "+rl)
+		thinking, cleanText := extractThinking(markdownText)
+		if thinking != "" {
+			lines = append(lines, mutedStyle.Render("  🧠 思考过程:"))
+			thinkingStyle := lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("242"))
+			renderedThinking := m.renderMarkdownFull(thinking)
+			for _, rl := range renderedThinking {
+				lines = append(lines, "    "+thinkingStyle.Render(rl))
+			}
+			lines = append(lines, "")
+		}
+
+		if cleanText != "" {
+			lines = append(lines, "  content:")
+			renderedLines := m.renderMarkdownFull(cleanText)
+			for _, rl := range renderedLines {
+				lines = append(lines, "    "+rl)
+			}
 		}
 	}
 
