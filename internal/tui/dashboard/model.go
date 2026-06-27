@@ -27,7 +27,7 @@ var TabNames = map[string]string{
 // TabHelpTips Tab 操作提示映射
 var TabHelpTips = map[string]string{
 	"logs":      "j/k: 上下移动 | enter: 详情 | esc: 返回 | c: 复制 | ←/→: 切换 Tab | q: 退出",
-	"stats":     "j/k: 上下移动 | tab: 切换视图 | ←/→: 切换 Tab | q: 退出",
+	"stats":     "1-5: 时间范围 | j/k: 上下移动 | ←/→: 切换 Tab | q: 退出",
 	"team_rank": "j/k: 上下移动 | enter: 详情 | ←/→: 切换 Tab | q: 退出",
 	"models":    "j/k: 上下移动 | enter: 详情 | ←/→: 切换 Tab | q: 退出",
 	"teams":     "j/k: 上下移动 | enter: 详情 | ←/→: 切换 Tab | q: 退出",
