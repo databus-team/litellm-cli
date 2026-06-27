@@ -36,7 +36,6 @@ type Model struct {
 	startDate        string
 	endDate          string
 	timeRangePreset  TimeRangePreset // 当前时间范围预设
-	viewMode         string // "counter" or "bar"
 	data             []api.UserDailyActivity
 	aggregated       aggregatedMetrics
 	selectedBarIndex int
@@ -72,7 +71,6 @@ func NewModel(client StatsClient, startDate, endDate string) *Model {
 		client:           client,
 		startDate:        startDate,
 		endDate:          endDate,
-		viewMode:         "counter",
 		selectedBarIndex: -1,
 		width:            120,
 		height:           40,
@@ -83,6 +81,9 @@ func NewModel(client StatsClient, startDate, endDate string) *Model {
 
 	// 根据日期范围自动推断预设
 	m.timeRangePreset = inferTimeRangePreset(startDate, endDate)
+
+	// 默认选中第一项
+	m.selectedBarIndex = 0
 
 	return m
 }
@@ -159,26 +160,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.switchTimeRange(TimeRangeHalfYear)
 		case "5":
 			return m, m.switchTimeRange(TimeRangeYear)
-		case "tab":
-			if m.viewMode == "counter" {
-				m.viewMode = "bar"
-				if len(m.data) > 0 && m.selectedBarIndex < 0 {
-					m.selectedBarIndex = 0
-				}
-			} else {
-				m.viewMode = "counter"
-			}
-			return m, nil
-		case "shift+tab":
-			if m.viewMode == "bar" {
-				m.viewMode = "counter"
-			} else {
-				m.viewMode = "bar"
-				if len(m.data) > 0 && m.selectedBarIndex < 0 {
-					m.selectedBarIndex = 0
-				}
-			}
-			return m, nil
 		case "down", "j":
 			if len(m.data) > 0 {
 				if m.selectedBarIndex < len(m.data)-1 {
@@ -259,22 +240,12 @@ func (m *Model) View() string {
 	sb.WriteString("\n")
 
 	// 帮助信息
-	if m.viewMode == "bar" {
-		help := components.NewHelp([]components.HelpKey{
-			{Key: "1-5", Desc: "时间范围"},
-			{Key: "j/k 或 ↓/↑", Desc: "移动选择"},
-			{Key: "Tab", Desc: "切换视图"},
-			{Key: "q", Desc: "退出"},
-		})
-		sb.WriteString(help.View(m.width))
-	} else {
-		help := components.NewHelp([]components.HelpKey{
-			{Key: "1-5", Desc: "时间范围"},
-			{Key: "Tab", Desc: "切换视图"},
-			{Key: "q", Desc: "退出"},
-		})
-		sb.WriteString(help.View(m.width))
-	}
+	help := components.NewHelp([]components.HelpKey{
+		{Key: "1-5", Desc: "时间范围"},
+		{Key: "j/k 或 ↓/↑", Desc: "移动选择"},
+		{Key: "q", Desc: "退出"},
+	})
+	sb.WriteString(help.View(m.width))
 
 	return sb.String()
 }
