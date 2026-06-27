@@ -151,7 +151,8 @@ func (m *Model) View() string {
 		return components.NewPlaceholder("暂无数据").View() + "\n"
 	}
 
-	isLargeScreen := m.width >= 115
+	// 响应式断点
+	isLargeScreen := m.width >= 100
 
 	var sb strings.Builder
 
@@ -160,62 +161,48 @@ func (m *Model) View() string {
 		if isLargeScreen {
 			header := components.NewHeader("用量统计看板", fmt.Sprintf("%s - %s | 按 q 退出", m.startDate, m.endDate))
 			sb.WriteString(header.View(m.width))
-			sb.WriteString("\n\n")
-		} else if m.viewMode == "bar" {
-			header := components.NewHeader("每日花费", fmt.Sprintf("%s - %s | 按 Tab 切换视图 | 按 q 退出", m.startDate, m.endDate))
-			sb.WriteString(header.View(m.width))
-			sb.WriteString("\n\n")
+			sb.WriteString("\n")
 		} else {
 			header := components.NewHeader("用量统计", fmt.Sprintf("%s - %s | 按 Tab 切换视图 | 按 q 退出", m.startDate, m.endDate))
 			sb.WriteString(header.View(m.width))
-			sb.WriteString("\n\n")
+			sb.WriteString("\n")
 		}
 	}
 
-	// 根据屏幕大小和视图模式显示内容
+	// 新布局：顶部紧凑卡片 + 底部水平柱状图
+	// 顶部卡片区域（紧凑排列）
+	counterWidth := m.width - 4
+	if counterWidth > 100 {
+		counterWidth = 100
+	}
+	sb.WriteString(m.renderCounterContent(counterWidth))
+	sb.WriteString("\n")
+
+	// 分隔线
 	if isLargeScreen {
-		// 大屏：同时显示 counter 和 bar（横向排列），帮助信息显示 j/k 导航
-		leftWidth := 55
-		rightWidth := m.width - leftWidth - 4
+		sb.WriteString(strings.Repeat("─", m.width))
+		sb.WriteString("\n")
+	}
 
-		leftContent := m.renderCounterContent(leftWidth)
-		rightContent := m.renderBarContent(rightWidth)
+	// 底部水平柱状图
+	barWidth := m.width - 4
+	sb.WriteString(m.renderBarContent(barWidth))
+	sb.WriteString("\n")
 
-		joined := lipgloss.JoinHorizontal(lipgloss.Top,
-			leftContent,
-			"    ",
-			rightContent,
-		)
-		sb.WriteString(joined)
-		sb.WriteString("\n\n")
-
+	// 帮助信息
+	if m.viewMode == "bar" {
 		help := components.NewHelp([]components.HelpKey{
-			{Key: "j/k 或 ↓/↑", Desc: "在右侧图表中移动"},
+			{Key: "j/k 或 ↓/↑", Desc: "移动选择"},
+			{Key: "Tab", Desc: "切换视图"},
 			{Key: "q", Desc: "退出"},
 		})
 		sb.WriteString(help.View(m.width))
 	} else {
-		// 小屏幕模式 (复用原有的 else 分支代码)
-		if m.viewMode == "bar" {
-			sb.WriteString(m.renderBarContent(m.width))
-			sb.WriteString("\n\n")
-
-			help := components.NewHelp([]components.HelpKey{
-				{Key: "Tab", Desc: "切换视图"},
-				{Key: "j/k 或 ↓/↑", Desc: "移动"},
-				{Key: "q", Desc: "退出"},
-			})
-			sb.WriteString(help.View(m.width))
-		} else {
-			sb.WriteString(m.renderCounterContent(m.width))
-			sb.WriteString("\n\n")
-
-			help := components.NewHelp([]components.HelpKey{
-				{Key: "Tab", Desc: "切换视图"},
-				{Key: "q", Desc: "退出"},
-			})
-			sb.WriteString(help.View(m.width))
-		}
+		help := components.NewHelp([]components.HelpKey{
+			{Key: "Tab", Desc: "切换视图"},
+			{Key: "q", Desc: "退出"},
+		})
+		sb.WriteString(help.View(m.width))
 	}
 
 	return sb.String()
@@ -285,11 +272,13 @@ func (m *Model) calculateAggregated() {
 func (m *Model) renderCounterContent(width int) string {
 	var sb strings.Builder
 
+	// 紧凑卡片样式
 	cardStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("252")).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("240")).
-		Padding(0, 1)
+		Padding(0, 1).
+		Height(2)
 
 	labelStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("240"))
@@ -298,45 +287,45 @@ func (m *Model) renderCounterContent(width int) string {
 		Bold(true).
 		Foreground(lipgloss.Color("159"))
 
+	// 6 个核心指标（紧凑显示：图标 + 标签 + 数值在同一行）
 	metrics := []struct {
 		label string
 		value string
 	}{
-		{"💰 总花费", fmt.Sprintf("$%.4f", m.aggregated.TotalSpend)},
-		{"📤 总请求", fmt.Sprintf("%d", m.aggregated.TotalRequests)},
-		{"✅ 成功请求", fmt.Sprintf("%d", m.aggregated.Successful)},
-		{"❌ 失败请求", fmt.Sprintf("%d", m.aggregated.Failed)},
-		{"📝 Prompt Tokens", formatTokens(m.aggregated.PromptTokens)},
-		{"✍️ Completion Tokens", formatTokens(m.aggregated.CompletionTokens)},
-		{"📊 总 Tokens", formatTokens(m.aggregated.TotalTokens)},
-		{"📈 平均请求费用", fmt.Sprintf("$%.6f", m.aggregated.AvgCostPerReq)},
+		{"💰 总花费", fmt.Sprintf("$%.2f", m.aggregated.TotalSpend)},
+		{"📤 请求", fmt.Sprintf("%d", m.aggregated.TotalRequests)},
+		{"✅ 成功", fmt.Sprintf("%d", m.aggregated.Successful)},
+		{"❌ 失败", fmt.Sprintf("%d", m.aggregated.Failed)},
+		{"📊 Tokens", formatTokens(m.aggregated.TotalTokens)},
+		{"📈 均费", fmt.Sprintf("$%.4f", m.aggregated.AvgCostPerReq)},
 	}
 
-	cols := 4
+	// 动态列数：大屏3列，中屏2列，小屏1列
+	cols := 3
 	if width < 100 {
 		cols = 2
 	}
-	if width < 60 {
+	if width < 50 {
 		cols = 1
 	}
 
-	// 动态计算卡片宽度：让卡片横向铺满 width。
-	// 每个卡片的 border 占用 2 个字符，所以 cardStyle.Width 应该设为 (width / cols) - 2。
+	// 紧凑卡片宽度
 	cardWidth := (width / cols) - 2
-	if cardWidth < 20 {
-		cardWidth = 20
+	if cardWidth < 18 {
+		cardWidth = 18
 	}
-	if cardWidth > 35 {
-		cardWidth = 35
+	if cardWidth > 30 {
+		cardWidth = 30
 	}
-	cardHeight := 4
 
+	// 渲染紧凑卡片（图标+标签+数值单行显示）
 	for row := 0; row < len(metrics); row += cols {
 		var rowCards []string
 		for col := 0; col < cols && row+col < len(metrics); col++ {
 			metric := metrics[row+col]
-			card := labelStyle.Render(metric.label) + "\n" + valueStyle.Render(metric.value)
-			rowCards = append(rowCards, cardStyle.Width(cardWidth).Height(cardHeight).AlignVertical(lipgloss.Top).Render(card))
+			// 紧凑格式：标签 + 数值（单行）
+			card := labelStyle.Render(metric.label) + " " + valueStyle.Render(metric.value)
+			rowCards = append(rowCards, cardStyle.Width(cardWidth).Render(card))
 		}
 		sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, rowCards...))
 		sb.WriteString("\n")
@@ -362,6 +351,9 @@ func (m *Model) renderBarContent(width int) string {
 		Foreground(lipgloss.Color("159")).
 		Bold(true)
 
+	spendLabelStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("159"))
+
 	var maxSpend float64
 	for _, r := range m.data {
 		if r.Metrics.Spend > maxSpend {
@@ -369,53 +361,92 @@ func (m *Model) renderBarContent(width int) string {
 		}
 	}
 
-	// 动态计算柱状图的最大宽度，排除两旁的文字所占宽度，让柱状图尽量占满屏幕
-	barMaxWidth := width - 26
-	if barMaxWidth < 10 {
-		barMaxWidth = 10
+	// 水平柱状图：计算进度条可用宽度
+	// 布局：[日期] [████████░░░░] $XX.XX
+	// 日期占 12 字符，金额占 10 字符，预留 2 字符间距
+	labelWidth := 12
+	spendWidth := 10
+	barAvailableWidth := width - labelWidth - spendWidth - 4
+	if barAvailableWidth < 8 {
+		barAvailableWidth = 8
 	}
-	if barMaxWidth > 80 {
-		barMaxWidth = 80
+	if barAvailableWidth > 50 {
+		barAvailableWidth = 50
 	}
 
+	// 渲染每日的水平进度条
 	for i, r := range m.data {
-		dateStr := r.Date
-		if len(m.data) > 7 {
-			if i%2 == 1 && i != len(m.data)-1 {
-				dateStr = ""
-			}
-		}
-
 		isSelected := i == m.selectedBarIndex
 
+		// 计算进度条宽度
 		var barWidth int
 		if maxSpend > 0 {
-			barWidth = int(float64(barMaxWidth) * r.Metrics.Spend / maxSpend)
+			barWidth = int(float64(barAvailableWidth) * r.Metrics.Spend / maxSpend)
+		}
+		barStr := strings.Repeat("█", barWidth)
+		barStr += strings.Repeat("░", barAvailableWidth-barWidth)
+
+		// 格式化日期（简化显示）
+		dateStr := r.Date
+		if len(dateStr) > 10 {
+			dateStr = dateStr[5:] // 只显示 MM-DD
 		}
 
-		barStr := strings.Repeat("█", barWidth)
+		// 渲染行：[日期] [████████░░] $XX.XX
 		if isSelected {
 			sb.WriteString(selectedStyle.Render("▶ "))
+			sb.WriteString(dateLabelStyle.Render(fmt.Sprintf("%-12s", dateStr)))
+			sb.WriteString(" ")
 			sb.WriteString(barFocusedStyle.Render(barStr))
+			sb.WriteString(" ")
+			sb.WriteString(spendLabelStyle.Render(fmt.Sprintf("$%.2f", r.Metrics.Spend)))
 		} else {
 			sb.WriteString("  ")
+			sb.WriteString(dateLabelStyle.Render(fmt.Sprintf("%-12s", dateStr)))
+			sb.WriteString(" ")
 			sb.WriteString(barStyle.Render(barStr))
-		}
-
-		sb.WriteString(fmt.Sprintf(" $%.2f", r.Metrics.Spend))
-
-		if dateStr != "" {
-			sb.WriteString("  ")
-			sb.WriteString(dateLabelStyle.Render(dateStr))
+			sb.WriteString(" ")
+			sb.WriteString(spendLabelStyle.Render(fmt.Sprintf("$%.2f", r.Metrics.Spend)))
 		}
 
 		sb.WriteString("\n")
 	}
 
+	// 选中项详情面板（显示在底部）
 	if m.selectedBarIndex >= 0 && m.selectedBarIndex < len(m.data) {
 		sb.WriteString("\n")
-		sb.WriteString(m.renderDetailPanel(m.data[m.selectedBarIndex], width))
+		sb.WriteString(m.renderDetailPanelCompact(m.data[m.selectedBarIndex], width))
 	}
+
+	return sb.String()
+}
+
+// renderDetailPanelCompact 显示选中日期的紧凑详情面板
+func (m *Model) renderDetailPanelCompact(data api.UserDailyActivity, width int) string {
+	var sb strings.Builder
+
+	panelStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("86")).
+		Padding(0, 1)
+
+	keyStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245"))
+
+	valueStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("159"))
+
+	// 紧凑详情：单行显示多个指标
+	row1 := keyStyle.Render("💰 ") + valueStyle.Render(fmt.Sprintf("$%.2f ", data.Metrics.Spend))
+	row1 += keyStyle.Render("📤 ") + valueStyle.Render(fmt.Sprintf("%d ", data.Metrics.APIRequests))
+	row1 += keyStyle.Render("✅ ") + valueStyle.Render(fmt.Sprintf("%d ", data.Metrics.SuccessfulRequests))
+	row1 += keyStyle.Render("❌ ") + valueStyle.Render(fmt.Sprintf("%d", data.Metrics.FailedRequests))
+
+	row2 := keyStyle.Render("📊 ") + valueStyle.Render(fmt.Sprintf("%s ", formatTokens(data.Metrics.TotalTokens)))
+	row2 += keyStyle.Render("📝 ") + valueStyle.Render(fmt.Sprintf("%s ", formatTokens(data.Metrics.PromptTokens)))
+	row2 += keyStyle.Render("✍️ ") + valueStyle.Render(formatTokens(data.Metrics.CompletionTokens))
+
+	sb.WriteString(panelStyle.Width(width - 4).Render(row1 + "\n" + row2))
 
 	return sb.String()
 }
