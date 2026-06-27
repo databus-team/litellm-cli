@@ -272,16 +272,15 @@ func (m *Model) calculateAggregated() {
 func (m *Model) renderCounterContent(width int) string {
 	var sb strings.Builder
 
-	// 紧凑卡片样式
+	// 紧凑卡片样式（无边框紧凑显示）
 	cardStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("252")).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("240")).
-		Padding(0, 1).
-		Height(2)
+		Padding(0, 1)
 
 	labelStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240"))
+		Foreground(lipgloss.Color("245"))
 
 	valueStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -302,23 +301,23 @@ func (m *Model) renderCounterContent(width int) string {
 
 	// 动态列数：大屏3列，中屏2列，小屏1列
 	cols := 3
-	if width < 100 {
+	if width < 80 {
 		cols = 2
 	}
-	if width < 50 {
+	if width < 40 {
 		cols = 1
 	}
 
-	// 紧凑卡片宽度
-	cardWidth := (width / cols) - 2
-	if cardWidth < 18 {
-		cardWidth = 18
+	// 更短的卡片宽度
+	cardWidth := (width / cols) - 1
+	if cardWidth < 14 {
+		cardWidth = 14
 	}
-	if cardWidth > 30 {
-		cardWidth = 30
+	if cardWidth > 22 {
+		cardWidth = 22
 	}
 
-	// 渲染紧凑卡片（图标+标签+数值单行显示）
+	// 渲染紧凑卡片（图标+标签+数值单行显示，无边框高度）
 	for row := 0; row < len(metrics); row += cols {
 		var rowCards []string
 		for col := 0; col < cols && row+col < len(metrics); col++ {
@@ -421,34 +420,24 @@ func (m *Model) renderBarContent(width int) string {
 	return sb.String()
 }
 
-// renderDetailPanelCompact 显示选中日期的紧凑详情面板
+// renderDetailPanelCompact 显示选中日期的超紧凑详情面板（单行）
 func (m *Model) renderDetailPanelCompact(data api.UserDailyActivity, width int) string {
-	var sb strings.Builder
-
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("86")).
-		Padding(0, 1)
-
 	keyStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("245"))
 
 	valueStyle := lipgloss.NewStyle().
+		Bold(true).
 		Foreground(lipgloss.Color("159"))
 
-	// 紧凑详情：单行显示多个指标
-	row1 := keyStyle.Render("💰 ") + valueStyle.Render(fmt.Sprintf("$%.2f ", data.Metrics.Spend))
-	row1 += keyStyle.Render("📤 ") + valueStyle.Render(fmt.Sprintf("%d ", data.Metrics.APIRequests))
-	row1 += keyStyle.Render("✅ ") + valueStyle.Render(fmt.Sprintf("%d ", data.Metrics.SuccessfulRequests))
-	row1 += keyStyle.Render("❌ ") + valueStyle.Render(fmt.Sprintf("%d", data.Metrics.FailedRequests))
+	// 单行显示所有指标
+	detail := keyStyle.Render("📅 ") + valueStyle.Render(fmt.Sprintf("%s ", data.Date))
+	detail += keyStyle.Render("💰 ") + valueStyle.Render(fmt.Sprintf("$%.2f ", data.Metrics.Spend))
+	detail += keyStyle.Render("📤 ") + valueStyle.Render(fmt.Sprintf("%d ", data.Metrics.APIRequests))
+	detail += keyStyle.Render("✅ ") + valueStyle.Render(fmt.Sprintf("%d ", data.Metrics.SuccessfulRequests))
+	detail += keyStyle.Render("❌ ") + valueStyle.Render(fmt.Sprintf("%d ", data.Metrics.FailedRequests))
+	detail += keyStyle.Render("📊 ") + valueStyle.Render(formatTokens(data.Metrics.TotalTokens))
 
-	row2 := keyStyle.Render("📊 ") + valueStyle.Render(fmt.Sprintf("%s ", formatTokens(data.Metrics.TotalTokens)))
-	row2 += keyStyle.Render("📝 ") + valueStyle.Render(fmt.Sprintf("%s ", formatTokens(data.Metrics.PromptTokens)))
-	row2 += keyStyle.Render("✍️ ") + valueStyle.Render(formatTokens(data.Metrics.CompletionTokens))
-
-	sb.WriteString(panelStyle.Width(width - 4).Render(row1 + "\n" + row2))
-
-	return sb.String()
+	return detail
 }
 
 func (m *Model) renderDetailPanel(data api.UserDailyActivity, width int) string {
