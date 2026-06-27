@@ -2,12 +2,26 @@ package stats
 
 import (
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"litellm-cli/internal/api"
 	"litellm-cli/internal/tui/components"
+)
+
+// TimeRangePreset 定义时间范围预设
+type TimeRangePreset string
+
+const (
+	TimeRangeWeek      TimeRangePreset = "week"      // 最近一周
+	TimeRangeMonth     TimeRangePreset = "month"     // 最近一个月
+	TimeRange3Months   TimeRangePreset = "3months"   // 最近3个月
+	TimeRangeHalfYear  TimeRangePreset = "halfyear"  // 最近半年
+	TimeRangeYear      TimeRangePreset = "year"      // 今年
+	TimeRangeCustom    TimeRangePreset = "custom"    // 自定义
 )
 
 // StatsClient defines the client interface required by the stats TUI
@@ -21,6 +35,7 @@ type Model struct {
 	client           StatsClient
 	startDate        string
 	endDate          string
+	timeRangePreset  TimeRangePreset // 当前时间范围预设
 	viewMode         string // "counter" or "bar"
 	data             []api.UserDailyActivity
 	aggregated       aggregatedMetrics
@@ -53,7 +68,7 @@ type StatsLoadedMsg struct {
 
 // NewModel creates a new stats TUI Model
 func NewModel(client StatsClient, startDate, endDate string) *Model {
-	return &Model{
+	m := &Model{
 		client:           client,
 		startDate:        startDate,
 		endDate:          endDate,
@@ -63,7 +78,47 @@ func NewModel(client StatsClient, startDate, endDate string) *Model {
 		height:           40,
 		loading:          true,
 		By:               "user",
-		showHeader:      true, // 默认显示 header
+		showHeader:       true, // 默认显示 header
+	}
+
+	// 根据日期范围自动推断预设
+	m.timeRangePreset = inferTimeRangePreset(startDate, endDate)
+
+	return m
+}
+
+// inferTimeRangePreset 根据日期范围推断预设
+func inferTimeRangePreset(startDate, endDate string) TimeRangePreset {
+	start, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		return TimeRangeCustom
+	}
+	end, err := time.Parse("2006-01-02", endDate)
+	if err != nil {
+		return TimeRangeCustom
+	}
+
+	days := int(end.Sub(start).Hours() / 24)
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	yearStart := time.Date(today.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+
+	switch {
+	case days <= 1:
+		return TimeRangeWeek
+	case days <= 7:
+		return TimeRangeWeek
+	case days <= 31:
+		return TimeRangeMonth
+	case days <= 93:
+		return TimeRange3Months
+	case days <= 183:
+		return TimeRangeHalfYear
+	default:
+		if start.After(yearStart) || start.Equal(yearStart) {
+			return TimeRangeYear
+		}
+		return TimeRangeCustom
 	}
 }
 
@@ -94,6 +149,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+		case "1":
+			return m, m.switchTimeRange(TimeRangeWeek)
+		case "2":
+			return m, m.switchTimeRange(TimeRangeMonth)
+		case "3":
+			return m, m.switchTimeRange(TimeRange3Months)
+		case "4":
+			return m, m.switchTimeRange(TimeRangeHalfYear)
+		case "5":
+			return m, m.switchTimeRange(TimeRangeYear)
 		case "tab":
 			if m.viewMode == "counter" {
 				m.viewMode = "bar"
@@ -169,6 +234,10 @@ func (m *Model) View() string {
 		}
 	}
 
+	// 时间范围选择器
+	sb.WriteString(m.renderTimeRangeSelector())
+	sb.WriteString("\n")
+
 	// 新布局：顶部紧凑卡片 + 底部水平柱状图
 	// 顶部卡片区域（紧凑排列）
 	counterWidth := m.width - 4
@@ -192,6 +261,7 @@ func (m *Model) View() string {
 	// 帮助信息
 	if m.viewMode == "bar" {
 		help := components.NewHelp([]components.HelpKey{
+			{Key: "1-5", Desc: "时间范围"},
 			{Key: "j/k 或 ↓/↑", Desc: "移动选择"},
 			{Key: "Tab", Desc: "切换视图"},
 			{Key: "q", Desc: "退出"},
@@ -199,6 +269,7 @@ func (m *Model) View() string {
 		sb.WriteString(help.View(m.width))
 	} else {
 		help := components.NewHelp([]components.HelpKey{
+			{Key: "1-5", Desc: "时间范围"},
 			{Key: "Tab", Desc: "切换视图"},
 			{Key: "q", Desc: "退出"},
 		})
@@ -353,8 +424,11 @@ func (m *Model) renderBarContent(width int) string {
 	spendLabelStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("159"))
 
+	// 根据时间范围和数据量调整显示粒度
+	displayData := m.adjustDataForGranularity()
+
 	var maxSpend float64
-	for _, r := range m.data {
+	for _, r := range displayData {
 		if r.Metrics.Spend > maxSpend {
 			maxSpend = r.Metrics.Spend
 		}
@@ -374,7 +448,7 @@ func (m *Model) renderBarContent(width int) string {
 	}
 
 	// 渲染每日的水平进度条
-	for i, r := range m.data {
+	for i, r := range displayData {
 		isSelected := i == m.selectedBarIndex
 
 		// 计算进度条宽度
@@ -412,12 +486,147 @@ func (m *Model) renderBarContent(width int) string {
 	}
 
 	// 选中项详情面板（显示在底部）
-	if m.selectedBarIndex >= 0 && m.selectedBarIndex < len(m.data) {
+	if m.selectedBarIndex >= 0 && m.selectedBarIndex < len(displayData) {
 		sb.WriteString("\n")
-		sb.WriteString(m.renderDetailPanelCompact(m.data[m.selectedBarIndex], width))
+		sb.WriteString(m.renderDetailPanelCompact(displayData[m.selectedBarIndex], width))
 	}
 
 	return sb.String()
+}
+
+// adjustDataForGranularity 根据时间范围调整数据粒度
+func (m *Model) adjustDataForGranularity() []api.UserDailyActivity {
+	days := len(m.data)
+	if days == 0 {
+		return m.data
+	}
+
+	// 数据量少于15天，直接显示原始数据
+	if days <= 15 {
+		return m.data
+	}
+
+	// 数据量在15-60天之间，按周汇总
+	if days <= 60 {
+		return m.aggregateByWeek()
+	}
+
+	// 数据量超过60天，按月汇总
+	return m.aggregateByMonth()
+}
+
+// aggregateByWeek 按周汇总数据
+func (m *Model) aggregateByWeek() []api.UserDailyActivity {
+	if len(m.data) == 0 {
+		return m.data
+	}
+
+	// 按周分组
+	weeklyData := make(map[string]api.UserDailyActivity)
+	for _, d := range m.data {
+		date, err := time.Parse("2006-01-02", d.Date)
+		if err != nil {
+			continue
+		}
+		// 获取周一的日期
+		weekday := int(date.Weekday())
+		if weekday == 0 {
+			weekday = 7 // 周日转为7
+		}
+		monday := date.AddDate(0, 0, -(weekday - 1))
+		weekKey := monday.Format("2006-01-02")
+
+		if existing, ok := weeklyData[weekKey]; ok {
+			existing.Metrics.Spend += d.Metrics.Spend
+			existing.Metrics.APIRequests += d.Metrics.APIRequests
+			existing.Metrics.SuccessfulRequests += d.Metrics.SuccessfulRequests
+			existing.Metrics.FailedRequests += d.Metrics.FailedRequests
+			existing.Metrics.PromptTokens += d.Metrics.PromptTokens
+			existing.Metrics.CompletionTokens += d.Metrics.CompletionTokens
+			existing.Metrics.TotalTokens += d.Metrics.TotalTokens
+			weeklyData[weekKey] = existing
+		} else {
+			weeklyData[weekKey] = api.UserDailyActivity{
+				Date: weekKey,
+				Metrics: api.ActivityMetrics{
+					Spend:               d.Metrics.Spend,
+					APIRequests:         d.Metrics.APIRequests,
+					SuccessfulRequests:  d.Metrics.SuccessfulRequests,
+					FailedRequests:       d.Metrics.FailedRequests,
+					PromptTokens:        d.Metrics.PromptTokens,
+					CompletionTokens:     d.Metrics.CompletionTokens,
+					TotalTokens:          d.Metrics.TotalTokens,
+				},
+			}
+		}
+	}
+
+	// 转换为切片并排序
+	result := make([]api.UserDailyActivity, 0, len(weeklyData))
+	for _, v := range weeklyData {
+		result = append(result, v)
+	}
+
+	// 按日期排序
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Date < result[j].Date
+	})
+
+	return result
+}
+
+// aggregateByMonth 按月汇总数据
+func (m *Model) aggregateByMonth() []api.UserDailyActivity {
+	if len(m.data) == 0 {
+		return m.data
+	}
+
+	// 按月分组
+	monthlyData := make(map[string]api.UserDailyActivity)
+	for _, d := range m.data {
+		date, err := time.Parse("2006-01-02", d.Date)
+		if err != nil {
+			continue
+		}
+		monthKey := date.Format("2006-01")
+
+		if existing, ok := monthlyData[monthKey]; ok {
+			existing.Metrics.Spend += d.Metrics.Spend
+			existing.Metrics.APIRequests += d.Metrics.APIRequests
+			existing.Metrics.SuccessfulRequests += d.Metrics.SuccessfulRequests
+			existing.Metrics.FailedRequests += d.Metrics.FailedRequests
+			existing.Metrics.PromptTokens += d.Metrics.PromptTokens
+			existing.Metrics.CompletionTokens += d.Metrics.CompletionTokens
+			existing.Metrics.TotalTokens += d.Metrics.TotalTokens
+			monthlyData[monthKey] = existing
+		} else {
+			monthlyData[monthKey] = api.UserDailyActivity{
+				Date: monthKey,
+				Metrics: api.ActivityMetrics{
+					Spend:               d.Metrics.Spend,
+					APIRequests:         d.Metrics.APIRequests,
+					SuccessfulRequests:  d.Metrics.SuccessfulRequests,
+					FailedRequests:       d.Metrics.FailedRequests,
+					PromptTokens:        d.Metrics.PromptTokens,
+					CompletionTokens:     d.Metrics.CompletionTokens,
+					TotalTokens:          d.Metrics.TotalTokens,
+				},
+			}
+		}
+	}
+
+	// 转换为切片并排序
+	result := make([]api.UserDailyActivity, 0, len(monthlyData))
+	for _, v := range monthlyData {
+		result = append(result, v)
+	}
+
+	// 按日期排序
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Date < result[j].Date
+	})
+
+	return result
 }
 
 // renderDetailPanelCompact 显示选中日期的超紧凑详情面板（单行）
@@ -493,4 +702,83 @@ func formatTokens(n int64) string {
 // ShowHeader 控制是否显示顶部 header
 func (m *Model) ShowHeader(show bool) {
 	m.showHeader = show
+}
+
+// switchTimeRange 切换时间范围并重新加载数据
+func (m *Model) switchTimeRange(preset TimeRangePreset) tea.Cmd {
+	m.timeRangePreset = preset
+	m.startDate, m.endDate = getTimeRangeDates(preset)
+	m.loading = true
+	m.selectedBarIndex = -1
+	return m.RefreshCmd()
+}
+
+// getTimeRangeDates 根据预设获取日期范围
+func getTimeRangeDates(preset TimeRangePreset) (string, string) {
+	now := time.Now()
+	endDate := now.Format("2006-01-02")
+
+	var startDate time.Time
+	switch preset {
+	case TimeRangeWeek:
+		startDate = now.AddDate(0, 0, -7)
+	case TimeRangeMonth:
+		startDate = now.AddDate(0, -1, 0)
+	case TimeRange3Months:
+		startDate = now.AddDate(0, -3, 0)
+	case TimeRangeHalfYear:
+		startDate = now.AddDate(0, -6, 0)
+	case TimeRangeYear:
+		startDate = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+	default:
+		startDate = now.AddDate(0, 0, -7)
+	}
+
+	return startDate.Format("2006-01-02"), endDate
+}
+
+// renderTimeRangeSelector 渲染时间范围选择器
+func (m *Model) renderTimeRangeSelector() string {
+	presets := []struct {
+		preset   TimeRangePreset
+		label    string
+		shortcut string
+	}{
+		{TimeRangeWeek, "最近一周", "1"},
+		{TimeRangeMonth, "最近一个月", "2"},
+		{TimeRange3Months, "最近3个月", "3"},
+		{TimeRangeHalfYear, "最近半年", "4"},
+		{TimeRangeYear, "今年", "5"},
+	}
+
+	// 当前范围显示
+	currentRange := fmt.Sprintf("%s - %s", m.startDate, m.endDate)
+
+	// 构建按钮
+	var buttons []string
+	for _, p := range presets {
+		isActive := m.timeRangePreset == p.preset
+		btnStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245")).
+			Padding(0, 1)
+
+		if isActive {
+			btnStyle = btnStyle.
+				Foreground(lipgloss.Color("86")).
+				Bold(true)
+		}
+
+		btn := btnStyle.Render(fmt.Sprintf("[%s] %s", p.shortcut, p.label))
+		buttons = append(buttons, btn)
+	}
+
+	// 当前范围标签
+	rangeStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("159")).
+		Bold(true)
+
+	result := rangeStyle.Render("📅 " + currentRange + "  ")
+	result += lipgloss.JoinHorizontal(0, buttons...)
+
+	return result
 }
