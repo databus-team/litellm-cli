@@ -24,6 +24,17 @@ var TabNames = map[string]string{
 	"login":     "🔐 登录",
 }
 
+// TabHelpTips Tab 操作提示映射
+var TabHelpTips = map[string]string{
+	"logs":      "j/k: 上下移动 | enter: 详情 | esc: 返回 | c: 复制 | ←/→: 切换 Tab | q: 退出",
+	"stats":     "j/k: 上下移动 | tab: 切换视图 | ←/→: 切换 Tab | q: 退出",
+	"team_rank": "j/k: 上下移动 | enter: 详情 | ←/→: 切换 Tab | q: 退出",
+	"models":    "j/k: 上下移动 | enter: 详情 | ←/→: 切换 Tab | q: 退出",
+	"teams":     "j/k: 上下移动 | enter: 详情 | ←/→: 切换 Tab | q: 退出",
+	"keyinfo":   "←/→: 切换 Tab | q: 退出",
+	"login":     "←/→: 切换 Tab | q: 退出",
+}
+
 // Model 是 Dashboard 的主 Model，包含所有 Tab 的子 Model
 type Model struct {
 	// Active tab
@@ -326,7 +337,12 @@ func (m *Model) renderHeader() string {
 // renderFooter 渲染底部帮助信息
 func (m *Model) renderFooter() string {
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	return mutedStyle.Render("←/→: 切换 Tab | q: 退出")
+	// 根据当前活动的 tab 获取对应的操作提示
+	tip, ok := TabHelpTips[m.activeTab]
+	if !ok {
+		tip = "←/→: 切换 Tab | q: 退出"
+	}
+	return mutedStyle.Render(tip)
 }
 
 // clientAdapter 将 *api.Client 适配为 logs.LogsClient
