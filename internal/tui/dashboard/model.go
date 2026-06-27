@@ -121,7 +121,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// 转发窗口大小给活动子模型
+		// 转发窗口大小给当前活动子模型，确保 stats 能获取正确的宽度
 		child, cmd := m.activeModel().Update(msg)
 		return m.updateChildModel(child, cmd)
 
@@ -202,9 +202,15 @@ func (m *Model) handleTabKey(msg tea.KeyMsg) bool {
 	switch msg.String() {
 	case "right", "l":
 		m.activeTab = nextTab(m.activeTab, 1)
+		// 发送窗口大小给新的活动子模型，确保它能正确渲染
+		child, _ := m.activeModel().Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		m.updateChildModelFromSwitch(child)
 		return true
 	case "left", "h":
 		m.activeTab = nextTab(m.activeTab, -1)
+		// 发送窗口大小给新的活动子模型
+		child, _ := m.activeModel().Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		m.updateChildModelFromSwitch(child)
 		return true
 	}
 	return false
@@ -245,6 +251,12 @@ func (m *Model) activeModel() tea.Model {
 
 // updateChildModel 更新子模型并返回
 func (m *Model) updateChildModel(child tea.Model, cmd tea.Cmd) (*Model, tea.Cmd) {
+	m.updateChildModelFromSwitch(child)
+	return m, cmd
+}
+
+// updateChildModelFromSwitch 从 tab 切换时更新子模型（不返回 cmd）
+func (m *Model) updateChildModelFromSwitch(child tea.Model) {
 	switch m.activeTab {
 	case "logs":
 		if logsModel, ok := child.(*logs.Model); ok {
@@ -275,7 +287,6 @@ func (m *Model) updateChildModel(child tea.Model, cmd tea.Cmd) (*Model, tea.Cmd)
 			m.LoginTab = loginTab
 		}
 	}
-	return m, cmd
 }
 
 // renderHeader 渲染 Tab bar
@@ -292,13 +303,6 @@ func (m *Model) renderHeader() string {
 		Background(lipgloss.Color("236")).
 		Padding(0, 1)
 
-	titleStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("86")).
-		Bold(true)
-
-	// 标题
-	title := titleStyle.Render("📊 LiteLLM Dashboard")
-
 	// 构建 Tab bar
 	var tabParts []string
 	for _, tab := range TabOrder {
@@ -314,8 +318,6 @@ func (m *Model) renderHeader() string {
 
 	// 整体布局
 	var sb strings.Builder
-	sb.WriteString(title)
-	sb.WriteString("\n")
 	sb.WriteString(tabs)
 
 	return sb.String()
