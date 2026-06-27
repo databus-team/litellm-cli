@@ -8,12 +8,12 @@ import (
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
+	"litellm-cli/internal/api"
 )
 
 // TeamRankClient 定义 Team Rank 数据获取的接口
 type TeamRankClient interface {
 	GetUserInfo() (*UserInfo, error)
-	GetTeamRank(teamID string) (*TeamRankResponse, error)
 }
 
 // UserInfo 用户信息
@@ -44,9 +44,11 @@ type TeamKey struct {
 
 // TeamRankResponse 团队排行榜响应
 type TeamRankResponse struct {
-	Team       *UserTeam
-	CurrentUID string
-	Ranks      []UserRank
+	TeamID      string
+	TeamAlias   string
+	TotalSpend  float64
+	CurrentRank *UserRank
+	Ranks       []UserRank
 }
 
 // UserRank 用户排名
@@ -62,6 +64,7 @@ type UserRank struct {
 // teamRankModel 是 Team Rank 的 TUI Model
 type teamRankModel struct {
 	client        TeamRankClient
+	apiClient     *api.Client // 直接使用 API client 调用 /team 接口
 	teamID        string
 	data          *TeamRankResponse
 	selectedIndex int
@@ -76,12 +79,16 @@ type teamRankModel struct {
 func newTeamRankModel(client TeamRankClient) *teamRankModel {
 	return &teamRankModel{
 		client:        client,
-		teamID:        "",
 		selectedIndex: 0,
 		width:         120,
 		height:        40,
 		loading:       true,
 	}
+}
+
+// SetAPIClient 设置 API client
+func (m *teamRankModel) SetAPIClient(apiClient *api.Client) {
+	m.apiClient = apiClient
 }
 
 // Init 实现 tea.Model 接口
@@ -143,19 +150,20 @@ func (m *teamRankModel) View() string {
 		Foreground(lipgloss.Color("86")).
 		Background(lipgloss.Color("236"))
 
-	teamName := m.data.Team.TeamAlias
-	if teamName == "" {
-		teamName = m.data.Team.TeamID
-	}
+	sb.WriteString(title.Render(fmt.Sprintf(" 🏆 %s 用量排行榜 ", m.data.TeamAlias)))
+	sb.WriteString("\n\n")
 
-	sb.WriteString(title.Render(fmt.Sprintf(" 🏆 %s 用量排行榜 ", teamName)))
+	// 总用量
+	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	sb.WriteString(greenStyle.Render(fmt.Sprintf("  团队总用量: $%.2f", m.data.TotalSpend)))
 	sb.WriteString("\n\n")
 
 	// 渲染表格
 	// 计算列宽
-	rankWidth := 4
+	rankWidth := 5
 	emailWidth := 30
-	spendWidth := 11
+	spendWidth := 12
 	percentWidth := 8
 
 	padRight := func(s string, width int) string {
@@ -174,40 +182,55 @@ func (m *teamRankModel) View() string {
 	}
 
 	// 表头
-	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	sb.WriteString(fmt.Sprintf("  %s %s %s %s\n",
 		padRight("排名", rankWidth),
 		padRight("用户", emailWidth),
 		padLeft("用量", spendWidth),
 		padLeft("占比", percentWidth)))
-	sb.WriteString(mutedStyle.Render(" " + strings.Repeat("─", 65)))
+	sb.WriteString(mutedStyle.Render(" " + strings.Repeat("─", 70)))
 	sb.WriteString("\n")
 
 	// 渲染排名
+	cyanStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("51")).Bold(true)
+	// 选中行样式（与 logs tab 对齐）
+	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("86"))
 	for i, r := range m.data.Ranks {
 		email := r.Email
 		if runewidth.StringWidth(email) > emailWidth {
 			email = runewidth.Truncate(email, emailWidth-3, "...")
 		}
 
+		rankStr := fmt.Sprintf("#%d", r.Rank)
 		if r.IsMe {
-			cyanStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("51")).Bold(true)
-			sb.WriteString(cyanStyle.Render(fmt.Sprintf("  →%d", r.Rank)))
-		} else if i == m.selectedIndex {
-			sb.WriteString("  ▶ ")
-		} else {
-			sb.WriteString("    ")
+			rankStr = "→" + fmt.Sprintf("%d", r.Rank)
 		}
 
+		rankPadded := padRight(rankStr, rankWidth)
 		emailPadded := padRight(email, emailWidth)
 		spendPadded := padLeft(fmt.Sprintf("$%.2f", r.Spend), spendWidth)
 		percentPadded := padLeft(fmt.Sprintf("%.1f%%", r.Percent), percentWidth)
 
-		sb.WriteString(emailPadded)
-		sb.WriteString(greenStyle.Render(" "+spendPadded))
-		sb.WriteString(" ")
-		sb.WriteString(greenStyle.Render(percentPadded))
+		// 选中行样式
+		lineStyle := greenStyle
+		if r.IsMe {
+			lineStyle = cyanStyle
+		} else if i == m.selectedIndex {
+			lineStyle = selectedStyle
+		}
+
+		sb.WriteString(lineStyle.Render("  " + rankPadded))
+		sb.WriteString(lineStyle.Render(emailPadded))
+		sb.WriteString(" " + lineStyle.Render(spendPadded))
+		sb.WriteString(" " + lineStyle.Render(percentPadded))
+		sb.WriteString("\n")
+	}
+
+	// 显示当前用户排名
+	if m.data.CurrentRank != nil {
+		sb.WriteString("\n")
+		sb.WriteString(cyanStyle.Render(fmt.Sprintf("  📊 你的排名: #%d / %d", m.data.CurrentRank.Rank, len(m.data.Ranks))))
+		sb.WriteString("\n")
+		sb.WriteString(cyanStyle.Render(fmt.Sprintf("    你的用量: $%.2f (占比 %.1f%%)", m.data.CurrentRank.Spend, m.data.CurrentRank.Percent)))
 		sb.WriteString("\n")
 	}
 
@@ -226,25 +249,22 @@ func (m *teamRankModel) refreshCmd() tea.Cmd {
 			return teamRankLoadedMsg{Error: err}
 		}
 
-		// 选择第一个团队
-		var targetTeam *UserTeam
-		if len(userInfo.Teams) > 0 {
-			targetTeam = &userInfo.Teams[0]
+		if len(userInfo.Teams) == 0 {
+			return teamRankLoadedMsg{Error: fmt.Errorf("没有找到所属团队")}
 		}
 
-		if targetTeam == nil {
-			return teamRankLoadedMsg{Error: fmt.Errorf("没有找到团队")}
-		}
+		// 使用第一个团队
+		team := userInfo.Teams[0]
 
 		// 构建 user_id -> email 映射
 		userEmailMap := make(map[string]string)
-		for _, member := range targetTeam.Members {
+		for _, member := range team.Members {
 			userEmailMap[member.UserID] = member.Email
 		}
 
 		// 按 user_id 聚合用量
 		userSpend := make(map[string]float64)
-		for _, k := range targetTeam.Keys {
+		for _, k := range team.Keys {
 			if k.UserID != "" {
 				userSpend[k.UserID] += k.Spend
 			}
@@ -286,11 +306,22 @@ func (m *teamRankModel) refreshCmd() tea.Cmd {
 			ranks[i].Rank = i + 1
 		}
 
+		// 找到当前用户排名
+		var currentRank *UserRank
+		for i := range ranks {
+			if ranks[i].IsMe {
+				currentRank = &ranks[i]
+				break
+			}
+		}
+
 		return teamRankLoadedMsg{
 			Data: &TeamRankResponse{
-				Team:       targetTeam,
-				CurrentUID: userInfo.UserID,
-				Ranks:      ranks,
+				TeamID:      team.TeamID,
+				TeamAlias:   team.TeamAlias,
+				TotalSpend:  totalSpend,
+				CurrentRank: currentRank,
+				Ranks:       ranks,
 			},
 		}
 	}

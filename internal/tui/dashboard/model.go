@@ -70,8 +70,8 @@ func NewModel(client *api.Client, apiKey string) *Model {
 func (m *Model) initChildModels() {
 	// Logs - 使用实际的 client
 	m.Logs = logs.NewModel(clientAdapter{client: m.apiClient}, 5, "")
-	// Stats - 使用实际的 client
-	m.Stats = stats.NewModel(statsClientAdapter{client: m.apiClient}, "", "")
+	// Stats - 使用团队维度的数据
+	m.Stats = stats.NewModel(statsClientAdapter{client: m.apiClient}, "", "team")
 	// Team Rank - 使用适配器
 	m.TeamRank = newTeamRankModel(NewTeamRankClientAdapter(m.apiClient))
 	// Panels
@@ -83,8 +83,16 @@ func (m *Model) initChildModels() {
 
 // Init 实现 tea.Model 接口
 func (m *Model) Init() tea.Cmd {
-	// 初始化当前活动 tab 的命令
-	return m.activeModel().Init()
+	// 初始化所有子模型的命令（这样切换到任何 tab 时数据都已加载）
+	var cmds []tea.Cmd
+	cmds = append(cmds, m.Logs.Init())
+	cmds = append(cmds, m.Stats.Init())
+	cmds = append(cmds, m.TeamRank.Init())
+	cmds = append(cmds, m.ModelsTab.Init())
+	cmds = append(cmds, m.TeamsTab.Init())
+	cmds = append(cmds, m.KeyinfoTab.Init())
+	cmds = append(cmds, m.LoginTab.Init())
+	return tea.Batch(cmds...)
 }
 
 // Update 实现 tea.Model 接口
@@ -116,6 +124,56 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 转发窗口大小给活动子模型
 		child, cmd := m.activeModel().Update(msg)
 		return m.updateChildModel(child, cmd)
+
+	// 处理各子模型加载完成的消息，路由到对应的子模型
+	case logs.LogsLoadedMsg:
+		child, cmd := m.Logs.Update(msg)
+		if logsModel, ok := child.(*logs.Model); ok {
+			m.Logs = logsModel
+		}
+		return m, cmd
+
+	case stats.StatsLoadedMsg:
+		child, cmd := m.Stats.Update(msg)
+		if statsModel, ok := child.(*stats.Model); ok {
+			m.Stats = statsModel
+		}
+		return m, cmd
+
+	case modelsLoadedMsg:
+		child, cmd := m.ModelsTab.Update(msg)
+		if modelsTab, ok := child.(*modelsTabModel); ok {
+			m.ModelsTab = modelsTab
+		}
+		return m, cmd
+
+	case teamsLoadedMsg:
+		child, cmd := m.TeamsTab.Update(msg)
+		if teamsTab, ok := child.(*teamsTabModel); ok {
+			m.TeamsTab = teamsTab
+		}
+		return m, cmd
+
+	case keyinfoLoadedMsg:
+		child, cmd := m.KeyinfoTab.Update(msg)
+		if keyinfoTab, ok := child.(*keyinfoTabModel); ok {
+			m.KeyinfoTab = keyinfoTab
+		}
+		return m, cmd
+
+	case loginLoadedMsg:
+		child, cmd := m.LoginTab.Update(msg)
+		if loginTab, ok := child.(*loginTabModel); ok {
+			m.LoginTab = loginTab
+		}
+		return m, cmd
+
+	case teamRankLoadedMsg:
+		child, cmd := m.TeamRank.Update(msg)
+		if teamRankModel, ok := child.(*teamRankModel); ok {
+			m.TeamRank = teamRankModel
+		}
+		return m, cmd
 
 	default:
 		// 转发其他消息给当前活动子模型
