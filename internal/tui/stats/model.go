@@ -46,6 +46,7 @@ type Model struct {
 	loading          bool
 	By               string // Aggregation dimension: "user", "team", etc.
 	showHeader       bool   // 是否显示顶部 header（在 dashboard 中隐藏）
+	granularity      string // "daily", "weekly", "monthly"
 }
 
 type aggregatedMetrics struct {
@@ -77,15 +78,42 @@ func NewModel(client StatsClient, startDate, endDate string) *Model {
 		loading:          true,
 		By:               "user",
 		showHeader:       true, // 默认显示 header
+		granularity:      "daily",
 	}
 
 	// 根据日期范围自动推断预设
 	m.timeRangePreset = inferTimeRangePreset(startDate, endDate)
 
+	// 根据范围推断粒度
+	m.granularity = inferGranularity(startDate, endDate)
+
 	// 默认选中第一项
 	m.selectedBarIndex = 0
 
 	return m
+}
+
+// inferGranularity 根据日期范围推断粒度
+func inferGranularity(startDate, endDate string) string {
+	start, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		return "daily"
+	}
+	end, err := time.Parse("2006-01-02", endDate)
+	if err != nil {
+		return "daily"
+	}
+
+	days := int(end.Sub(start).Hours() / 24)
+
+	switch {
+	case days <= 15:
+		return "daily"
+	case days <= 60:
+		return "weekly"
+	default:
+		return "monthly"
+	}
 }
 
 // inferTimeRangePreset 根据日期范围推断预设
@@ -160,6 +188,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.switchTimeRange(TimeRangeHalfYear)
 		case "5":
 			return m, m.switchTimeRange(TimeRangeYear)
+		case "d":
+			m.granularity = "daily"
+			return m, nil
+		case "w":
+			m.granularity = "weekly"
+			return m, nil
+		case "m":
+			m.granularity = "monthly"
+			return m, nil
 		case "down", "j":
 			if len(m.data) > 0 {
 				if m.selectedBarIndex < len(m.data)-1 {
@@ -209,7 +246,7 @@ func (m *Model) View() string {
 			sb.WriteString(header.View(m.width))
 			sb.WriteString("\n")
 		} else {
-			header := components.NewHeader("用量统计", fmt.Sprintf("%s - %s | 按 Tab 切换视图 | 按 q 退出", m.startDate, m.endDate))
+			header := components.NewHeader("用量统计", fmt.Sprintf("%s - %s | 按 q 退出", m.startDate, m.endDate))
 			sb.WriteString(header.View(m.width))
 			sb.WriteString("\n")
 		}
@@ -457,25 +494,22 @@ func (m *Model) renderBarContent(width int) string {
 	return sb.String()
 }
 
-// adjustDataForGranularity 根据时间范围调整数据粒度
+// adjustDataForGranularity 根据手动选择的粒度调整数据
 func (m *Model) adjustDataForGranularity() []api.UserDailyActivity {
 	days := len(m.data)
 	if days == 0 {
 		return m.data
 	}
 
-	// 数据量少于15天，直接显示原始数据
-	if days <= 15 {
+	// 使用手动选择的粒度
+	switch m.granularity {
+	case "weekly":
+		return m.aggregateByWeek()
+	case "monthly":
+		return m.aggregateByMonth()
+	default: // "daily"
 		return m.data
 	}
-
-	// 数据量在15-60天之间，按周汇总
-	if days <= 60 {
-		return m.aggregateByWeek()
-	}
-
-	// 数据量超过60天，按月汇总
-	return m.aggregateByMonth()
 }
 
 // aggregateByWeek 按周汇总数据
@@ -672,7 +706,12 @@ func (m *Model) switchTimeRange(preset TimeRangePreset) tea.Cmd {
 	m.timeRangePreset = preset
 	m.startDate, m.endDate = getTimeRangeDates(preset)
 	m.loading = true
+	m.data = nil          // 清空数据，确保刷新
 	m.selectedBarIndex = -1
+
+	// 同时更新粒度
+	m.granularity = inferGranularity(m.startDate, m.endDate)
+
 	return m.RefreshCmd()
 }
 
@@ -717,7 +756,7 @@ func (m *Model) renderTimeRangeSelector() string {
 	// 当前范围显示
 	currentRange := fmt.Sprintf("%s - %s", m.startDate, m.endDate)
 
-	// 构建按钮
+	// 构建时间范围按钮
 	var buttons []string
 	for _, p := range presets {
 		isActive := m.timeRangePreset == p.preset
@@ -735,13 +774,47 @@ func (m *Model) renderTimeRangeSelector() string {
 		buttons = append(buttons, btn)
 	}
 
+	// 粒度切换按钮
+	granularityOptions := []struct {
+		granularity string
+		label       string
+		shortcut    string
+	}{
+		{"daily", "按天", "d"},
+		{"weekly", "按周", "w"},
+		{"monthly", "按月", "m"},
+	}
+
+	var granButtons []string
+	for _, g := range granularityOptions {
+		isActive := m.granularity == g.granularity
+		btnStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245")).
+			Padding(0, 1)
+
+		if isActive {
+			btnStyle = btnStyle.
+				Foreground(lipgloss.Color("82")). // 亮绿色
+				Bold(true)
+		}
+
+		btn := btnStyle.Render(fmt.Sprintf("[%s] %s", g.shortcut, g.label))
+		granButtons = append(granButtons, btn)
+	}
+
 	// 当前范围标签
 	rangeStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("159")).
 		Bold(true)
 
+	// 第一行：时间范围
 	result := rangeStyle.Render("📅 " + currentRange + "  ")
 	result += lipgloss.JoinHorizontal(0, buttons...)
+	result += "\n"
+
+	// 第二行：粒度选择
+	result += rangeStyle.Render("📊 粒度: ")
+	result += lipgloss.JoinHorizontal(0, granButtons...)
 
 	return result
 }
