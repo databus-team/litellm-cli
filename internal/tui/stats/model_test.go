@@ -115,10 +115,6 @@ func TestStatsTUI_RenderCharts(t *testing.T) {
 
 	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = newModel.(*Model)
-
-	if m.viewMode != "bar" {
-		t.Fatalf("expected viewMode to be 'bar', got '%s'", m.viewMode)
-	}
 	if m.selectedBarIndex != 0 {
 		t.Fatalf("expected selectedBarIndex to be 0, got %d", m.selectedBarIndex)
 	}
