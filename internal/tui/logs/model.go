@@ -302,6 +302,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else if m.viewMode == "detail" && m.detailState != nil {
 				if m.detailState.activeTab == "main" {
+					// 宽屏模式下：循环 0-3 (system → tools → messages → choices)
+					// 但只在 focusedSection == 3 时才切换到右侧高亮
 					m.detailState.focusedSection = (m.detailState.focusedSection - 1 + 4) % 4
 				} else {
 					maxItems := m.getTabItemCount(m.detailState.activeTab)
@@ -384,6 +386,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else if m.viewMode == "detail" && m.detailState != nil {
 				if m.detailState.activeTab == "main" {
+					// 宽屏模式下：循环 0-3 (system → tools → messages → choices)
+					// 但只在 focusedSection == 3 时才切换到右侧高亮，避免之前"同时"切换的怪异感
 					m.detailState.focusedSection = (m.detailState.focusedSection + 1) % 4
 				} else {
 					maxItems := m.getTabItemCount(m.detailState.activeTab)
@@ -823,9 +827,12 @@ func (m *Model) renderDetailView() string {
 			}
 		}
 
-		// 边界纠正
-		if scrollOffset > totalContent-maxDisplayLines {
-			scrollOffset = max(0, totalContent-maxDisplayLines)
+		// 边界纠正：确保 scrollOffset 不会导致内容向上滚动超出范围
+		// 如果内容总行数小于可显示行数，scrollOffset 应该为 0
+		if totalContent <= maxDisplayLines {
+			scrollOffset = 0
+		} else if scrollOffset > totalContent-maxDisplayLines {
+			scrollOffset = totalContent - maxDisplayLines
 		}
 		if scrollOffset < 0 {
 			scrollOffset = 0
@@ -1321,13 +1328,15 @@ func (m *Model) renderMainView(proxyReq, respData map[string]interface{}, cardSt
 		leftContent := strings.Join(leftCol, "\n")
 		rightContent := strings.Join(rightCol, "\n")
 
+		// 宽屏模式下：focusedSection == 3 时右侧 choices 高亮，其他时候左侧高亮
+		// 这样 system → tools → messages 切换时不会"同时"切换 panel 焦点
 		var leftCardStyle, rightCardStyle lipgloss.Style
-		if m.detailState.focusedSection == 0 {
-			leftCardStyle = focusedCardStyle
-			rightCardStyle = cardStyle
-		} else {
+		if m.detailState.focusedSection == 3 {
 			leftCardStyle = cardStyle
 			rightCardStyle = focusedCardStyle
+		} else {
+			leftCardStyle = focusedCardStyle
+			rightCardStyle = cardStyle
 		}
 
 		leftCard := leftCardStyle.Width(leftWidth - 2).Render(leftContent)
