@@ -61,6 +61,11 @@ type Model struct {
 	showHeader       bool             // 是否显示顶部 header（在 dashboard 中隐藏）
 	showFooter       bool             // 是否显示底部 help footer（在 dashboard 中隐藏，由父容器统一渲染）
 	debug            bool             // 是否启用调试日志
+	searchQuery      string           // 搜索关键词
+	showHelp         bool             // 是否显示帮助面板
+	searching        bool             // 是否处于搜索输入模式
+	sortField        string           // 排序字段: "time", "spend", "tokens"
+	sortAscending    bool             // 排序顺序
 }
 
 // NewModel 构造工厂函数
@@ -69,6 +74,11 @@ func NewModel(client LogsClient, interval int, modelFilter string) *Model {
 		client:        client,
 		interval:      interval,
 		model:         modelFilter,
+		searchQuery:   "",
+		showHelp:      false,
+		searching:     false,
+		sortField:     "time",
+		sortAscending: false,
 		data:          "加载中...",
 		seenLogIDs:    make(map[string]bool),
 		newLogIDs:     make(map[string]bool),
@@ -143,10 +153,81 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		key := msg.String()
 		switch key {
+		// 帮助面板切换
+		case "?":
+			if m.viewMode == "list" {
+				m.showHelp = !m.showHelp
+			}
+			return m, nil
+		// 搜索功能
+		case "/":
+			if m.viewMode == "list" && !m.showHelp {
+				m.searching = true
+				m.searchQuery = ""
+			}
+			return m, nil
+		// 搜索模式下：普通字符添加到搜索词
+		default:
+			if m.searching {
+				// 按 Enter 确认搜索
+				if key == "enter" {
+					m.searching = false
+					m.selectedIndex = 0
+					m.listScrollOffset = 0
+					return m, nil
+				}
+				// 按 Escape 取消搜索
+				if key == "esc" {
+					m.searching = false
+					m.searchQuery = ""
+					return m, nil
+				}
+				// 按退格键删除最后一个字符
+				if key == "backspace" {
+					if len(m.searchQuery) > 0 {
+						m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+					}
+					return m, nil
+				}
+				// 其他可打印字符添加到搜索词
+				if len(key) == 1 {
+					m.searchQuery += key
+					return m, nil
+				}
+				return m, nil
+			}
+		// 排序切换
+		case "s":
+			if m.viewMode == "list" {
+				fields := []string{"time", "spend", "tokens"}
+				currentIdx := 0
+				for i, f := range fields {
+					if m.sortField == f {
+						currentIdx = i
+						break
+					}
+				}
+				// 切换到下一个字段
+				m.sortField = fields[(currentIdx+1)%len(fields)]
+				m.sortAscending = false
+			}
+			return m, nil
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
 		case "esc":
+			// 搜索模式下按 Esc 取消搜索
+			if m.searching {
+				m.searching = false
+				m.searchQuery = ""
+				return m, nil
+			}
+			// 帮助面板模式下按 Esc 关闭帮助
+			if m.showHelp {
+				m.showHelp = false
+				return m, nil
+			}
+			// 详情视图的返回逻辑
 			if m.viewMode == "detail" && m.detailState != nil {
 				if m.detailState.itemDetailMode {
 					m.detailState.itemDetailMode = false
@@ -3257,8 +3338,85 @@ func (m *Model) renderMetadataContent() string {
 	return mutedStyle.Render("无 Metadata 数据")
 }
 
+// getVisibleData 返回经过滤和排序后的可见数据
+func (m *Model) getVisibleData() []api.SpendLogEntry {
+	var data []api.SpendLogEntry
+
+	if m.logData != nil {
+		data = m.logData.Data
+	} else if m.logDataOld != nil {
+		// 转换旧格式
+		for _, entry := range *m.logDataOld {
+			var spendLogEntry api.SpendLogEntry
+			b, _ := json.Marshal(entry)
+			json.Unmarshal(b, &spendLogEntry)
+			data = append(data, spendLogEntry)
+		}
+	}
+
+	// 1. 按 model 过滤
+	if m.model != "" {
+		var filtered []api.SpendLogEntry
+		for _, entry := range data {
+			if strings.Contains(entry.Model, m.model) {
+				filtered = append(filtered, entry)
+			}
+		}
+		data = filtered
+	}
+
+	// 2. 按 searchQuery 搜索过滤
+	if m.searchQuery != "" {
+		query := strings.ToLower(m.searchQuery)
+		var filtered []api.SpendLogEntry
+		for _, entry := range data {
+			if strings.Contains(strings.ToLower(entry.Model), query) ||
+				strings.Contains(strings.ToLower(entry.ID), query) ||
+				strings.Contains(strings.ToLower(entry.Status), query) {
+				filtered = append(filtered, entry)
+			}
+		}
+		data = filtered
+	}
+
+	// 3. 排序
+	if len(data) > 0 && m.sortField != "time" {
+		sorted := make([]api.SpendLogEntry, len(data))
+		copy(sorted, data)
+		switch m.sortField {
+		case "spend":
+			sort.Slice(sorted, func(i, j int) bool {
+				if m.sortAscending {
+					return sorted[i].TotalSpend < sorted[j].TotalSpend
+				}
+				return sorted[i].TotalSpend > sorted[j].TotalSpend
+			})
+		case "tokens":
+			sort.Slice(sorted, func(i, j int) bool {
+				if m.sortAscending {
+					return sorted[i].TotalTokens < sorted[j].TotalTokens
+				}
+				return sorted[i].TotalTokens > sorted[j].TotalTokens
+			})
+		}
+		data = sorted
+	}
+
+	return data
+}
+
 func (m *Model) renderListView() string {
 	var content strings.Builder
+
+	// 显示帮助面板
+	if m.showHelp {
+		return m.renderHelpPanel()
+	}
+
+	// 搜索输入模式
+	if m.searching {
+		return m.renderSearchInput()
+	}
 
 	availableRows := DetailDefaultRows
 	if m.height > 10 {
@@ -3274,18 +3432,18 @@ func (m *Model) renderListView() string {
 		m.listScrollOffset = 0
 	}
 
-	if m.logData != nil && len(m.logData.Data) > 0 {
-		filteredData := m.logData.Data
-		if m.model != "" {
-			var filtered []api.SpendLogEntry
-			for _, entry := range m.logData.Data {
-				if strings.Contains(entry.Model, m.model) {
-					filtered = append(filtered, entry)
-				}
-			}
-			filteredData = filtered
-		}
+	// 使用统一的 getVisibleData 获取过滤后的数据
+	filteredData := m.getVisibleData()
 
+	// 计算总记录数
+	var total int
+	if m.logData != nil {
+		total = int(m.logData.Total)
+	} else if m.logDataOld != nil {
+		total = len(*m.logDataOld)
+	}
+
+	if len(filteredData) > 0 {
 		// 限制滚动偏移不超过数据末尾
 		if m.listScrollOffset > len(filteredData)-visibleRows && len(filteredData) > visibleRows {
 			m.listScrollOffset = len(filteredData) - visibleRows
@@ -3313,36 +3471,61 @@ func (m *Model) renderListView() string {
 			renderIndex = visibleRows - 1
 		}
 
-		content.WriteString(renderLogsTable(filteredData, int(m.logData.Total), m.newLogIDs, availableRows, m.listScrollOffset, m.width, renderIndex, visibleRows))
-	} else if m.logDataOld != nil && len(*m.logDataOld) > 0 {
-		// 旧格式数据也支持滚动
-		if m.listScrollOffset > len(*m.logDataOld)-visibleRows && len(*m.logDataOld) > visibleRows {
-			m.listScrollOffset = len(*m.logDataOld) - visibleRows
-		}
-		if m.listScrollOffset < 0 {
-			m.listScrollOffset = 0
-		}
-		renderIndex := m.selectedIndex - m.listScrollOffset
-		if renderIndex < 0 {
-			renderIndex = 0
-		}
-		if renderIndex >= visibleRows {
-			renderIndex = visibleRows - 1
-		}
-		content.WriteString(renderLogsTableOld(m.logDataOld, m.interval, m.newLogIDs, availableRows, m.listScrollOffset, renderIndex, visibleRows))
+		content.WriteString(renderLogsTable(filteredData, total, m.newLogIDs, availableRows, m.listScrollOffset, m.width, renderIndex, visibleRows))
 	} else {
-		content.WriteString(components.NewPlaceholder("暂无数据").View())
+		// 改进的空状态提示
+		if m.searchQuery != "" || m.model != "" {
+			content.WriteString(components.NewPlaceholder("无匹配结果").View())
+			content.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("尝试调整搜索条件或清除筛选"))
+		} else {
+			content.WriteString(components.NewPlaceholder("暂无日志记录").View())
+			content.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("检查 API Key 权限 或 调整时间范围"))
+		}
 	}
 
-	header := components.NewHeader("LiteLLM 日志", fmt.Sprintf("刷新: %ds | ↑↓ 选择 | Enter 详情 | q 退出", m.interval))
+	// 构建状态栏信息
+	var statusInfo []string
+	statusInfo = append(statusInfo, fmt.Sprintf("刷新: %ds", m.interval))
 
-	result := content.String() +
-		fmt.Sprintf("\n\n⏱ 更新次数: %d | 时间: %s", m.tick, time.Now().Format("15:04:05"))
+	// 显示搜索/排序状态
+	if m.searchQuery != "" {
+		statusInfo = append(statusInfo, fmt.Sprintf("搜索: %q", m.searchQuery))
+	}
+	if m.model != "" {
+		statusInfo = append(statusInfo, fmt.Sprintf("模型: %s", m.model))
+	}
+	statusInfo = append(statusInfo, fmt.Sprintf("排序: %s", m.sortField))
+	statusInfo = append(statusInfo, fmt.Sprintf("更新: %d", m.tick))
+
+	statusBar := strings.Join(statusInfo, " | ")
+
+	header := components.NewHeader("LiteLLM 日志", statusBar+" | ? 帮助")
+
+	// 计算内容行数
+	contentStr := content.String()
+	contentLineCount := strings.Count(contentStr, "\n") + 1
+
+	// 底部状态栏 (时间 + 帮助文本 = 2行)
+	footerLineCount := 2
+
+	// header 1行 + 分隔线 1行 = 2行
+	headerLineCount := 2
+
+	// 计算需要填充的空白行数，使底部状态固定在屏幕底部
+	usedLines := headerLineCount + contentLineCount + footerLineCount
+	paddingLines := m.height - usedLines
+	if paddingLines > 0 {
+		contentStr += strings.Repeat("\n", paddingLines)
+	}
+
+	// 底部状态
+	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
+		fmt.Sprintf("时间: %s", time.Now().Format("15:04:05")))
 
 	if m.showHeader {
-		return header.View(m.width) + "\n\n" + result
+		return header.View(m.width) + "\n" + contentStr + footer
 	}
-	return result
+	return contentStr + footer
 }
 
 func (m *Model) loadDetail() tea.Cmd {
@@ -3395,23 +3578,6 @@ func (m *Model) loadDetail() tea.Cmd {
 		}
 		return DetailLoadedMsg{Data: detail}
 	}
-}
-
-// getVisibleData returns the filtered log data based on model filter
-func (m *Model) getVisibleData() []api.SpendLogEntry {
-	if m.logData == nil {
-		return nil
-	}
-	if m.model == "" {
-		return m.logData.Data
-	}
-	var filtered []api.SpendLogEntry
-	for _, entry := range m.logData.Data {
-		if strings.Contains(entry.Model, m.model) {
-			filtered = append(filtered, entry)
-		}
-	}
-	return filtered
 }
 
 func (m *Model) getTabItemCount(tab string) int {
@@ -3720,7 +3886,7 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 		entry := data[actualIndex]
 
 		if maxRows > 0 && i >= visibleRows {
-			sb.WriteString(mutedStyle.Render(fmt.Sprintf("\n... 还有 %d 条记录 (总 %d)", dataLen-(scrollOffset+visibleRows), total)))
+			sb.WriteString(mutedStyle.Render(fmt.Sprintf("\n显示 %d-%d 条，共 %d 条", scrollOffset+1, scrollOffset+visibleRows, total)))
 			break
 		}
 		rowCount++
@@ -3821,7 +3987,7 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 			tagStyle.Render(formatCell(tag, w_tags))))
 	}
 
-	sb.WriteString(fmt.Sprintf("\n%s\n", mutedStyle.Render(fmt.Sprintf("共 %d 条记录 (总 %d)", len(data), total))))
+	sb.WriteString(fmt.Sprintf("\n%s\n", mutedStyle.Render(fmt.Sprintf("已加载 %d 条", len(data)))))
 
 	return sb.String()
 }
@@ -3848,7 +4014,7 @@ func renderLogsTableOld(resp *api.SpendLogsResponse, intervalVal int, newLogIDs 
 		}
 
 		if maxRows > 0 && displayed >= visibleRows {
-			sb.WriteString(mutedStyle.Render(fmt.Sprintf("\n... 还有 %d 条记录", respLen-(scrollOffset+displayed))))
+			sb.WriteString(mutedStyle.Render(fmt.Sprintf("\n显示 %d-%d 条，共 %d 条", scrollOffset+1, scrollOffset+displayed, respLen)))
 			break
 		}
 
@@ -3883,7 +4049,7 @@ func renderLogsTableOld(resp *api.SpendLogsResponse, intervalVal int, newLogIDs 
 		}
 	}
 
-	sb.WriteString(fmt.Sprintf("\n%s\n", mutedStyle.Render(fmt.Sprintf("共 %d 条记录", len(*resp)))))
+	sb.WriteString(fmt.Sprintf("\n%s\n", mutedStyle.Render(fmt.Sprintf("已加载 %d 条", len(*resp)))))
 	return sb.String()
 }
 
@@ -3913,6 +4079,9 @@ func (m *Model) SetDebug(enabled bool) {
 
 // HelpText 返回当前视图状态对应的帮助文本（供父容器统一渲染 footer 时使用）
 func (m *Model) HelpText() string {
+	if m.showHelp {
+		return "?: 关闭帮助"
+	}
 	if m.viewMode == "detail" && m.detailState != nil {
 		if m.detailState.itemDetailMode {
 			var keys []string
@@ -3925,8 +4094,96 @@ func (m *Model) HelpText() string {
 		}
 		return "↑↓: 切换 | Enter: 查看详情 | ESC: 返回 | ←/→: 切换 tab | Q: 退出"
 	}
+	// 搜索模式
+	if m.searching {
+		return "输入关键词 | Enter: 确认 | Esc: 取消"
+	}
 	// 列表视图
-	return "↑↓: 切换 | enter: 详情 | c: 复制 | esc: 返回 | ←/→: 切换 tab | q: 退出"
+	return "↑↓: 切换 | Enter: 详情 | /: 搜索 | s: 排序 | c: 复制 | ?: 帮助 | q: 退出"
+}
+
+// renderHelpPanel 渲染帮助面板
+func (m *Model) renderHelpPanel() string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
+	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("159"))
+	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
+	var sb strings.Builder
+	sb.WriteString(titleStyle.Render(" 快捷键帮助 (按 ? 关闭) "))
+	sb.WriteString("\n\n")
+
+	// 基本导航
+	sb.WriteString(keyStyle.Render("↑↓") + " " + descStyle.Render("切换日志条目"))
+	sb.WriteString("\n")
+	sb.WriteString(keyStyle.Render("Enter") + " " + descStyle.Render("查看详情"))
+	sb.WriteString("\n")
+	sb.WriteString(keyStyle.Render("Esc") + " " + descStyle.Render("返回/关闭"))
+	sb.WriteString("\n")
+	sb.WriteString(keyStyle.Render("q") + " " + descStyle.Render("退出程序"))
+	sb.WriteString("\n\n")
+
+	// 搜索和排序
+	sb.WriteString(keyStyle.Render("/") + " " + descStyle.Render("搜索过滤 (输入关键词后回车)"))
+	sb.WriteString("\n")
+	sb.WriteString(keyStyle.Render("s") + " " + descStyle.Render("切换排序 (时间→花费→tokens)"))
+	sb.WriteString("\n")
+	sb.WriteString(keyStyle.Render("c") + " " + descStyle.Render("复制选中项"))
+	sb.WriteString("\n\n")
+
+	// 详情视图
+	sb.WriteString(keyStyle.Render("←→") + " " + descStyle.Render("切换详情 tab"))
+	sb.WriteString("\n")
+	sb.WriteString(keyStyle.Render("Tab") + " " + descStyle.Render("切换区块"))
+	sb.WriteString("\n")
+	sb.WriteString(keyStyle.Render("Enter") + " " + descStyle.Render("展开/折叠区块"))
+	sb.WriteString("\n\n")
+
+	// 其他
+	sb.WriteString(mutedStyle.Render("按 ? 返回日志列表"))
+
+	// 包装为面板样式
+	panelStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("86")).
+		Padding(1, 2)
+
+	if m.showHeader {
+		header := components.NewHeader("LiteLLM 日志", fmt.Sprintf("刷新: %ds | ? 关闭帮助", m.interval))
+		return header.View(m.width) + "\n\n" + panelStyle.Render(sb.String())
+	}
+	return panelStyle.Render(sb.String())
+}
+
+// renderSearchInput 渲染搜索输入框
+func (m *Model) renderSearchInput() string {
+	inputStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("159")).
+		Bold(true)
+	placeholderStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+
+	var sb strings.Builder
+	sb.WriteString(inputStyle.Render("🔍 搜索日志"))
+	sb.WriteString("\n\n")
+	sb.WriteString(placeholderStyle.Render("输入关键词 (模型名/请求ID/状态): "))
+	sb.WriteString("\n\n")
+	sb.WriteString(inputStyle.Render(" " + m.searchQuery + "_"))
+	sb.WriteString("\n\n")
+	sb.WriteString(helpStyle.Render("Enter: 确认搜索 | Esc: 取消 | 退格: 删除字符"))
+
+	panelStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("159")).
+		Padding(1, 2)
+
+	if m.showHeader {
+		header := components.NewHeader("LiteLLM 日志", fmt.Sprintf("搜索模式 | Esc 取消"))
+		return header.View(m.width) + "\n\n" + panelStyle.Render(sb.String())
+	}
+	return panelStyle.Render(sb.String())
 }
 
 // UI 常量
