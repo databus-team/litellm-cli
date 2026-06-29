@@ -704,10 +704,10 @@ func (m *Model) renderDetailView() string {
 
 	var lines []string
 
-	// 渲染头部
+	// 渲染头部 - 二级视图 header 显示 breadcrumb，无 subtitle（help 统一在 footer 显示）
 	var header *components.Header
 	if m.detailState.activeTab == "main" {
-		header = components.NewHeader("日志详情", "ESC 返回 | j/k 切换日志 | ↑↓ 切换卡片 | Tab | Enter")
+		header = components.NewHeader("日志详情", "") // help 在 footer 显示
 	} else if m.detailState.itemDetailMode {
 		tabName := map[string]string{
 			"system":   "System",
@@ -715,11 +715,7 @@ func (m *Model) renderDetailView() string {
 			"messages": "Message",
 			"choices":  "Choice",
 		}[m.detailState.activeTab]
-		subtitle := "ESC 返回列表 | ↑↓ 滚动"
-		if len(m.detailState.blocks) > 0 {
-			subtitle = "ESC 返回列表 | ↑↓ 滚动 | Tab 切换思考/正文"
-		}
-		header = components.NewHeader(fmt.Sprintf("日志详情 > %s[%d]", tabName, m.detailState.currentItemIndex), subtitle)
+		header = components.NewHeader(fmt.Sprintf("日志详情 > %s[%d]", tabName, m.detailState.currentItemIndex), "")
 	} else {
 		tabTitle := map[string]string{
 			"system":   "System Messages",
@@ -727,7 +723,7 @@ func (m *Model) renderDetailView() string {
 			"messages": "Messages",
 			"choices":  "Choices",
 		}[m.detailState.activeTab]
-		header = components.NewHeader(fmt.Sprintf("日志详情 > %s", tabTitle), "ESC 返回 | ↑↓ 选择 | Enter 查看详情")
+		header = components.NewHeader(fmt.Sprintf("日志详情 > %s", tabTitle), "")
 	}
 	lines = append(lines, header.View(m.width))
 	lines = append(lines, "")

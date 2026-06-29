@@ -276,6 +276,11 @@ func (m *Model) View() string {
 	sb.WriteString(m.renderBarContent(barWidth))
 	sb.WriteString("\n")
 
+	// 底部帮助信息（独立运行时显示，嵌入 dashboard 时由 dashboard 提供 footer）
+	if m.showHeader {
+		sb.WriteString(m.renderFooter())
+	}
+
 	return sb.String()
 }
 
@@ -338,6 +343,13 @@ func (m *Model) calculateAggregated() {
 		TotalTokens:      totalTokens,
 		AvgCostPerReq:    avgCost,
 	}
+}
+
+// renderFooter 渲染底部帮助信息
+func (m *Model) renderFooter() string {
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	tip := "1-5: 时间范围 | d/w/m: 粒度 | ↑↓: 选择日期 | q: 退出"
+	return mutedStyle.Render(tip)
 }
 
 func (m *Model) renderCounterContent(width int) string {
