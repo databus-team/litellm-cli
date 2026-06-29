@@ -24,3 +24,6 @@ vendor/
 
 # Runtime logs
 *.log
+
+# MCP config
+.mcp.json
