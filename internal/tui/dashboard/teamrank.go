@@ -123,6 +123,10 @@ func (m *teamRankModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.data = msg.Data
+		// 数据刷新后重置 selectedIndex，防止越界
+		if m.data != nil && len(m.data.Ranks) > 0 && m.selectedIndex >= len(m.data.Ranks) {
+			m.selectedIndex = len(m.data.Ranks) - 1
+		}
 	}
 	return m, nil
 }
@@ -140,6 +144,14 @@ func (m *teamRankModel) View() string {
 	}
 	if m.data == nil || len(m.data.Ranks) == 0 {
 		return "暂无数据\n"
+	}
+
+	// 确保 selectedIndex 不会越界
+	if m.selectedIndex >= len(m.data.Ranks) {
+		m.selectedIndex = len(m.data.Ranks) - 1
+	}
+	if m.selectedIndex < 0 {
+		m.selectedIndex = 0
 	}
 
 	var sb strings.Builder
@@ -220,7 +232,7 @@ func (m *teamRankModel) View() string {
 	cyanStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("51")).Bold(true)
 	// 选中行样式（与 logs tab 对齐）
 	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("86"))
-	for i := viewStart; i < viewEnd; i++ {
+	for i := viewStart; i < viewEnd && i < totalRanks; i++ {
 		r := m.data.Ranks[i]
 		email := r.Email
 		if runewidth.StringWidth(email) > emailWidth {

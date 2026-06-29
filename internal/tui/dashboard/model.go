@@ -11,30 +11,24 @@ import (
 )
 
 // TabOrder 定义了所有 Tab 的顺序
-var TabOrder = []string{"logs", "stats", "team_rank", "models", "teams", "keyinfo", "login"}
+var TabOrder = []string{"logs", "stats", "team_rank", "keyinfo"}
 
 // TabNames Tab 显示名称映射
 var TabNames = map[string]string{
 	"logs":      "📜 日志",
 	"stats":     "📊 统计",
 	"team_rank": "🏆 排行",
-	"models":    "📦 模型",
-	"teams":     "👥 团队",
 	"keyinfo":   "🔑 Key",
-	"login":     "🔐 登录",
 }
 
 // TabHelpTips Tab 操作提示映射
 // 格式：<特定操作> | <通用操作>
 // 通用操作固定为：esc 返回 | ←/→ 切换 tab | q 退出
 var TabHelpTips = map[string]string{
-	"logs":      "↑↓: 切换 | enter: 详情 | c: 复制 | esc: 返回 | ←/→: 切换 tab | q: 退出",
+	"logs":      "↑↓: 切换 | enter: 详情 | c: 复制 | g/G: 跳转 | r: 刷新 | esc: 返回 | ←/→: 切换 tab | q: 退出",
 	"stats":     "1-5: 时间范围 | d/w/m: 粒度 | ↑↓: 选择日期 | esc: 返回 | ←/→: 切换 tab | q: 退出",
 	"team_rank": "↑↓: 移动 | enter: 详情 | esc: 返回 | ←/→: 切换 tab | q: 退出",
-	"models":    "↑↓: 移动 | enter: 详情 | esc: 返回 | ←/→: 切换 tab | q: 退出",
-	"teams":     "↑↓: 移动 | enter: 详情 | esc: 返回 | ←/→: 切换 tab | q: 退出",
 	"keyinfo":   "esc: 返回 | ←/→: 切换 tab | q: 退出",
-	"login":     "←/→: 切换 tab | q: 退出",
 }
 
 // Model 是 Dashboard 的主 Model，包含所有 Tab 的子 Model
@@ -46,10 +40,7 @@ type Model struct {
 	Logs       *logs.Model
 	Stats      *stats.Model
 	TeamRank   *teamRankModel
-	ModelsTab  *modelsTabModel
-	TeamsTab   *teamsTabModel
 	KeyinfoTab *keyinfoTabModel
-	LoginTab   *loginTabModel
 
 	// API client
 	apiClient *api.Client
@@ -61,6 +52,9 @@ type Model struct {
 
 	// 是否正在退出
 	quitting bool
+
+	// 是否显示退出确认
+	showQuitConfirm bool
 }
 
 // DashboardQuitMsg 是 Dashboard 专用退出消息，用于在子模型之前捕获退出键
@@ -90,11 +84,8 @@ func (m *Model) initChildModels() {
 	m.Stats.ShowHeader(false)
 	// Team Rank - 使用适配器
 	m.TeamRank = newTeamRankModel(NewTeamRankClientAdapter(m.apiClient))
-	// Panels
-	m.ModelsTab = newModelsTabModel(m.apiClient)
-	m.TeamsTab = newTeamsTabModel(m.apiClient)
+	// Keyinfo
 	m.KeyinfoTab = newKeyinfoTabModel(m.apiClient, m.apiKey)
-	m.LoginTab = newLoginTabModel(m.apiClient)
 }
 
 // Init 实现 tea.Model 接口
@@ -104,10 +95,7 @@ func (m *Model) Init() tea.Cmd {
 	cmds = append(cmds, m.Logs.Init())
 	cmds = append(cmds, m.Stats.Init())
 	cmds = append(cmds, m.TeamRank.Init())
-	cmds = append(cmds, m.ModelsTab.Init())
-	cmds = append(cmds, m.TeamsTab.Init())
 	cmds = append(cmds, m.KeyinfoTab.Init())
-	cmds = append(cmds, m.LoginTab.Init())
 	return tea.Batch(cmds...)
 }
 
@@ -124,10 +112,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// 处理退出确认
+		if m.showQuitConfirm {
+			if msg.String() == "y" {
+				m.quitting = true
+				return m, tea.Quit
+			} else if msg.String() == "n" || msg.String() == "esc" || msg.String() == "enter" {
+				m.showQuitConfirm = false
+				return m, nil
+			}
+			return m, nil
+		}
+
 		// 处理退出键 - 在转发给子模型之前捕获
-		if msg.String() == "q" || msg.String() == "ctrl+c" {
-			m.quitting = true
-			return m, tea.Quit
+		if msg.String() == "q" {
+			m.showQuitConfirm = true
+			return m, nil
 		}
 
 		// 转发给当前活动子模型
@@ -215,6 +215,17 @@ func (m *Model) View() string {
 
 	// 渲染 Header (Tab bar)
 	header := m.renderHeader()
+
+	// 渲染退出确认
+	if m.showQuitConfirm {
+		confirmStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("220")). // 黄色
+			Bold(true)
+		confirmMsg := "\n\n" + confirmStyle.Render("  确认退出？(y/n)")
+		footer := m.renderFooter()
+		return header + confirmMsg + "\n" + footer
+	}
+
 	content := m.activeModel().View()
 	footer := m.renderFooter()
 
@@ -267,14 +278,8 @@ func (m *Model) activeModel() tea.Model {
 		return m.Stats
 	case "team_rank":
 		return m.TeamRank
-	case "models":
-		return m.ModelsTab
-	case "teams":
-		return m.TeamsTab
 	case "keyinfo":
 		return m.KeyinfoTab
-	case "login":
-		return m.LoginTab
 	default:
 		return m.Logs
 	}
@@ -301,21 +306,9 @@ func (m *Model) updateChildModelFromSwitch(child tea.Model) {
 		if teamRankModel, ok := child.(*teamRankModel); ok {
 			m.TeamRank = teamRankModel
 		}
-	case "models":
-		if modelsTab, ok := child.(*modelsTabModel); ok {
-			m.ModelsTab = modelsTab
-		}
-	case "teams":
-		if teamsTab, ok := child.(*teamsTabModel); ok {
-			m.TeamsTab = teamsTab
-		}
 	case "keyinfo":
 		if keyinfoTab, ok := child.(*keyinfoTabModel); ok {
 			m.KeyinfoTab = keyinfoTab
-		}
-	case "login":
-		if loginTab, ok := child.(*loginTabModel); ok {
-			m.LoginTab = loginTab
 		}
 	}
 }

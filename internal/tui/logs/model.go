@@ -61,9 +61,7 @@ type Model struct {
 	showHeader       bool             // 是否显示顶部 header（在 dashboard 中隐藏）
 	showFooter       bool             // 是否显示底部 help footer（在 dashboard 中隐藏，由父容器统一渲染）
 	debug            bool             // 是否启用调试日志
-	searchQuery      string           // 搜索关键词
 	showHelp         bool             // 是否显示帮助面板
-	searching        bool             // 是否处于搜索输入模式
 	sortField        string           // 排序字段: "time", "spend", "tokens"
 	sortAscending    bool             // 排序顺序
 }
@@ -74,9 +72,7 @@ func NewModel(client LogsClient, interval int, modelFilter string) *Model {
 		client:        client,
 		interval:      interval,
 		model:         modelFilter,
-		searchQuery:   "",
 		showHelp:      false,
-		searching:     false,
 		sortField:     "time",
 		sortAscending: false,
 		data:          "加载中...",
@@ -159,43 +155,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showHelp = !m.showHelp
 			}
 			return m, nil
-		// 搜索功能
-		case "/":
-			if m.viewMode == "list" && !m.showHelp {
-				m.searching = true
-				m.searchQuery = ""
-			}
-			return m, nil
-		// 搜索模式下：普通字符添加到搜索词
 		default:
-			if m.searching {
-				// 按 Enter 确认搜索
-				if key == "enter" {
-					m.searching = false
-					m.selectedIndex = 0
-					m.listScrollOffset = 0
-					return m, nil
-				}
-				// 按 Escape 取消搜索
-				if key == "esc" {
-					m.searching = false
-					m.searchQuery = ""
-					return m, nil
-				}
-				// 按退格键删除最后一个字符
-				if key == "backspace" {
-					if len(m.searchQuery) > 0 {
-						m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
-					}
-					return m, nil
-				}
-				// 其他可打印字符添加到搜索词
-				if len(key) == 1 {
-					m.searchQuery += key
-					return m, nil
-				}
-				return m, nil
-			}
 		// 排序切换
 		case "s":
 			if m.viewMode == "list" {
@@ -219,7 +179,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// 搜索模式下按 Esc 取消搜索
 			if m.searching {
 				m.searching = false
-				m.searchQuery = ""
+				
 				return m, nil
 			}
 			// 帮助面板模式下按 Esc 关闭帮助
@@ -3365,21 +3325,7 @@ func (m *Model) getVisibleData() []api.SpendLogEntry {
 		data = filtered
 	}
 
-	// 2. 按 searchQuery 搜索过滤
-	if m.searchQuery != "" {
-		query := strings.ToLower(m.searchQuery)
-		var filtered []api.SpendLogEntry
-		for _, entry := range data {
-			if strings.Contains(strings.ToLower(entry.Model), query) ||
-				strings.Contains(strings.ToLower(entry.ID), query) ||
-				strings.Contains(strings.ToLower(entry.Status), query) {
-				filtered = append(filtered, entry)
-			}
-		}
-		data = filtered
-	}
-
-	// 3. 排序
+	// 2. 排序
 	if len(data) > 0 && m.sortField != "time" {
 		sorted := make([]api.SpendLogEntry, len(data))
 		copy(sorted, data)
@@ -4094,10 +4040,6 @@ func (m *Model) HelpText() string {
 		}
 		return "↑↓: 切换 | Enter: 查看详情 | ESC: 返回 | ←/→: 切换 tab | Q: 退出"
 	}
-	// 搜索模式
-	if m.searching {
-		return "输入关键词 | Enter: 确认 | Esc: 取消"
-	}
 	// 列表视图
 	return "↑↓: 切换 | Enter: 详情 | /: 搜索 | s: 排序 | c: 复制 | ?: 帮助 | q: 退出"
 }
@@ -4155,36 +4097,7 @@ func (m *Model) renderHelpPanel() string {
 	return panelStyle.Render(sb.String())
 }
 
-// renderSearchInput 渲染搜索输入框
-func (m *Model) renderSearchInput() string {
-	inputStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("159")).
-		Bold(true)
-	placeholderStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240"))
-	helpStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240"))
 
-	var sb strings.Builder
-	sb.WriteString(inputStyle.Render("🔍 搜索日志"))
-	sb.WriteString("\n\n")
-	sb.WriteString(placeholderStyle.Render("输入关键词 (模型名/请求ID/状态): "))
-	sb.WriteString("\n\n")
-	sb.WriteString(inputStyle.Render(" " + m.searchQuery + "_"))
-	sb.WriteString("\n\n")
-	sb.WriteString(helpStyle.Render("Enter: 确认搜索 | Esc: 取消 | 退格: 删除字符"))
-
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("159")).
-		Padding(1, 2)
-
-	if m.showHeader {
-		header := components.NewHeader("LiteLLM 日志", fmt.Sprintf("搜索模式 | Esc 取消"))
-		return header.View(m.width) + "\n\n" + panelStyle.Render(sb.String())
-	}
-	return panelStyle.Render(sb.String())
-}
 
 // UI 常量
 const (
