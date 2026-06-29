@@ -25,7 +25,7 @@ var TabNames = map[string]string{
 // 格式：<特定操作> | <通用操作>
 // 通用操作固定为：esc 返回 | ←/→ 切换 tab | q 退出
 var TabHelpTips = map[string]string{
-	"logs":      "↑↓: 切换 | enter: 详情 | c: 复制 | g/G: 跳转 | r: 刷新 | esc: 返回 | ←/→: 切换 tab | q: 退出",
+	"logs":      "↑↓: 切换 | enter: 详情 | c: 复制 | g/G: 跳转 | r: 刷新/重试 | esc: 返回 | ←/→: 切换 tab | q: 退出",
 	"stats":     "1-5: 时间范围 | d/w/m: 粒度 | ↑↓: 选择日期 | esc: 返回 | ←/→: 切换 tab | q: 退出",
 	"team_rank": "↑↓: 移动 | enter: 详情 | esc: 返回 | ←/→: 切换 tab | q: 退出",
 	"keyinfo":   "esc: 返回 | ←/→: 切换 tab | q: 退出",
@@ -213,7 +213,6 @@ func (m *Model) View() string {
 		return "👋 已退出\n"
 	}
 
-	// 渲染 Header (Tab bar)
 	header := m.renderHeader()
 
 	// 渲染退出确认
@@ -223,13 +222,41 @@ func (m *Model) View() string {
 			Bold(true)
 		confirmMsg := "\n\n" + confirmStyle.Render("  确认退出？(y/n)")
 		footer := m.renderFooter()
+		// 使用 lipgloss 居中内容
 		return header + confirmMsg + "\n" + footer
 	}
 
 	content := m.activeModel().View()
 	footer := m.renderFooter()
 
-	return header + "\n" + content + "\n" + footer
+	// Footer 固定底部：计算填充行
+	var result strings.Builder
+	result.WriteString(header)
+	result.WriteString("\n")
+
+	// 计算内容区域需要填充的行数，使 footer 固定在底部
+	lines := strings.Split(content, "\n")
+	contentLines := len(lines)
+	footerLines := 1 // Footer 通常 1 行
+	
+	availableHeight := m.height - 4 // 减去 header 和空行
+	if contentLines < availableHeight {
+		// 填充空白行使 footer 固定底部
+		padding := availableHeight - contentLines - footerLines
+		if padding > 0 {
+			result.WriteString(content)
+			result.WriteString(strings.Repeat("\n", padding))
+		} else {
+			result.WriteString(content)
+		}
+	} else {
+		result.WriteString(content)
+	}
+
+	result.WriteString("\n")
+	result.WriteString(footer)
+
+	return result.String()
 }
 
 // handleTabKey 处理 Tab 切换键
@@ -243,13 +270,31 @@ func (m *Model) handleTabKey(msg tea.KeyMsg) bool {
 
 	switch msg.String() {
 	case "right", "l":
+		oldTab := m.activeTab
 		m.activeTab = nextTab(m.activeTab, 1)
+		// 离开日志 Tab 时暂停轮询
+		if oldTab == "logs" {
+			m.Logs.Update(logs.PausePollingMsg{})
+		}
+		// 进入日志 Tab 时恢复轮询
+		if m.activeTab == "logs" {
+			m.Logs.Update(logs.ResumePollingMsg{})
+		}
 		// 发送窗口大小给新的活动子模型，确保它能正确渲染
 		child, _ := m.activeModel().Update(tea.WindowSizeMsg{Width: m.width, Height: availableHeight})
 		m.updateChildModelFromSwitch(child)
 		return true
 	case "left", "h":
+		oldTab := m.activeTab
 		m.activeTab = nextTab(m.activeTab, -1)
+		// 离开日志 Tab 时暂停轮询
+		if oldTab == "logs" {
+			m.Logs.Update(logs.PausePollingMsg{})
+		}
+		// 进入日志 Tab 时恢复轮询
+		if m.activeTab == "logs" {
+			m.Logs.Update(logs.ResumePollingMsg{})
+		}
 		// 发送窗口大小给新的活动子模型
 		child, _ := m.activeModel().Update(tea.WindowSizeMsg{Width: m.width, Height: availableHeight})
 		m.updateChildModelFromSwitch(child)
@@ -315,17 +360,31 @@ func (m *Model) updateChildModelFromSwitch(child tea.Model) {
 
 // renderHeader 渲染 Tab bar
 func (m *Model) renderHeader() string {
+	tabCount := len(TabOrder)
+	if tabCount == 0 {
+		return ""
+	}
+
+	// 计算每个 Tab 的宽度：总宽度 / Tab 数量，保持最小宽度
+	minTabWidth := 8
+	tabWidth := m.width / tabCount
+	if tabWidth < minTabWidth {
+		tabWidth = minTabWidth
+	}
+
 	// Tab 样式
 	activeTabStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("255")).
 		Background(lipgloss.Color("86")).
 		Bold(true).
-		Padding(0, 1)
+		Width(tabWidth).
+		Align(lipgloss.Center)
 
 	inactiveTabStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("245")).
 		Background(lipgloss.Color("236")).
-		Padding(0, 1)
+		Width(tabWidth).
+		Align(lipgloss.Center)
 
 	// 构建 Tab bar
 	var tabParts []string
@@ -338,7 +397,7 @@ func (m *Model) renderHeader() string {
 		}
 	}
 
-	tabs := strings.Join(tabParts, " ")
+	tabs := strings.Join(tabParts, "")
 
 	// 整体布局
 	var sb strings.Builder

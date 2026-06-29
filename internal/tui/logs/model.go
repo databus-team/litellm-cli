@@ -62,6 +62,8 @@ type Model struct {
 	showFooter       bool             // 是否显示底部 help footer（在 dashboard 中隐藏，由父容器统一渲染）
 	debug            bool             // 是否启用调试日志
 	showHelp         bool             // 是否显示帮助面板
+	pollingPaused    bool             // 轮询是否已暂停
+	loadError        string           // 加载错误信息
 	sortField        string           // 排序字段: "time", "spend", "tokens"
 	sortAscending    bool             // 排序顺序
 }
@@ -73,6 +75,8 @@ func NewModel(client LogsClient, interval int, modelFilter string) *Model {
 		interval:      interval,
 		model:         modelFilter,
 		showHelp:      false,
+		pollingPaused: false,
+		loadError:     "",
 		sortField:     "time",
 		sortAscending: false,
 		data:          "加载中...",
@@ -97,6 +101,12 @@ type LogsLoadedMsg struct {
 
 // TickMsg 轮询定时消息
 type TickMsg time.Time
+
+// PausePollingMsg 暂停轮询消息
+type PausePollingMsg struct{}
+
+// ResumePollingMsg 恢复轮询消息
+type ResumePollingMsg struct{}
 
 // DetailLoadedMsg 异步详情加载成功的消息
 type DetailLoadedMsg struct {
@@ -261,6 +271,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
+		// g: 跳转顶部，G: 跳转底部
+		case "g":
+			if m.viewMode == "list" && m.logData != nil && len(m.logData.Data) > 0 {
+				m.selectedIndex = 0
+				m.listScrollOffset = 0
+			}
+			return m, nil
+		case "G":
+			if m.viewMode == "list" && m.logData != nil && len(m.logData.Data) > 0 {
+				m.selectedIndex = len(m.logData.Data) - 1
+				// 计算滚动偏移使最后一项可见
+				maxVisible := m.height - 10
+				if maxVisible > 0 {
+					m.listScrollOffset = max(0, len(m.logData.Data) - maxVisible)
+				}
+			}
+			return m, nil
+
 		case "c", "C":
 			if m.viewMode == "detail" && m.detailState != nil && m.detailState.itemDetailMode {
 				if len(m.detailState.blocks) > 0 && m.detailState.focusedBlock < len(m.detailState.blocks) {
@@ -515,19 +543,45 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 	case TickMsg:
 		m.tick++
+		// 如果轮询已暂停，跳过刷新但继续定时
+		if m.pollingPaused {
+			return m, tea.Tick(time.Duration(m.interval)*time.Second, func(t time.Time) tea.Msg {
+				return TickMsg(t)
+			})
+		}
 		return m, tea.Batch(
 			m.RefreshCmd(),
 			tea.Tick(time.Duration(m.interval)*time.Second, func(t time.Time) tea.Msg {
 				return TickMsg(t)
 			}),
 		)
+
+	// 暂停轮询
+	case PausePollingMsg:
+		m.pollingPaused = true
+		return m, nil
+
+	// 恢复轮询
+	case ResumePollingMsg:
+		m.pollingPaused = false
+		// 立即触发一次刷新
+		return m, m.RefreshCmd()
+
+	// 手动刷新
+	case "r":
+		if m.viewMode == "list" {
+			return m, m.RefreshCmd()
+		}
 	case LogsLoadedMsg:
 		if msg.Error != nil {
-			m.data = fmt.Sprintf("❌ 获取失败: %v", msg.Error)
+			m.data = "❌ 获取失败"
+			m.loadError = fmt.Sprintf("%v", msg.Error)
 			m.logData = nil
 			m.logDataOld = nil
 			return m, nil
 		}
+		// 成功后清除错误信息
+		m.loadError = ""
 
 		if msg.ResponseOld != nil {
 			respOld := msg.ResponseOld
@@ -753,10 +807,10 @@ func (m *Model) renderDetailView() string {
 
 	var lines []string
 
-	// 渲染头部 - 二级视图 header 显示 breadcrumb，无 subtitle（help 统一在 footer 显示）
+	// 渲染头部 - 面包屑导航从 Tab 开始
 	var header *components.Header
 	if m.detailState.activeTab == "main" {
-		header = components.NewHeader("日志详情", "") // help 在 footer 显示
+		header = components.NewHeader("日志 > 日志详情", "") // help 在 footer 显示
 	} else if m.detailState.itemDetailMode {
 		tabName := map[string]string{
 			"system":   "System",
@@ -764,7 +818,7 @@ func (m *Model) renderDetailView() string {
 			"messages": "Message",
 			"choices":  "Choice",
 		}[m.detailState.activeTab]
-		header = components.NewHeader(fmt.Sprintf("日志详情 > %s[%d]", tabName, m.detailState.currentItemIndex), "")
+		header = components.NewHeader(fmt.Sprintf("日志 > 日志详情 > %s[%d]", tabName, m.detailState.currentItemIndex), "")
 	} else {
 		tabTitle := map[string]string{
 			"system":   "System Messages",
@@ -772,9 +826,28 @@ func (m *Model) renderDetailView() string {
 			"messages": "Messages",
 			"choices":  "Choices",
 		}[m.detailState.activeTab]
-		header = components.NewHeader(fmt.Sprintf("日志详情 > %s", tabTitle), "")
+		header = components.NewHeader(fmt.Sprintf("日志 > 日志详情 > %s", tabTitle), "")
 	}
 	lines = append(lines, header.View(m.width))
+	
+	// 顶部元信息行
+	if m.selectedEntry != nil {
+		metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+		iconStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
+		
+		var metaParts []string
+		metaParts = append(metaParts, iconStyle.Render("📦")+metaStyle.Render(" "+m.selectedEntry.Model))
+		if m.selectedEntry.TotalSpend > 0 {
+			metaParts = append(metaParts, iconStyle.Render("💰")+metaStyle.Render(fmt.Sprintf(" $%.4f", m.selectedEntry.TotalSpend)))
+		}
+		if m.selectedEntry.TotalTokens > 0 {
+			metaParts = append(metaParts, iconStyle.Render("📊")+metaStyle.Render(fmt.Sprintf(" %d", m.selectedEntry.TotalTokens)))
+		}
+		metaParts = append(metaParts, iconStyle.Render("⏱️")+metaStyle.Render(" "+m.selectedEntry.StartTime))
+		metaParts = append(metaParts, iconStyle.Render("🔖")+metaStyle.Render(" "+m.selectedEntry.ID))
+		
+		lines = append(lines, lipgloss.JoinHorizontal(0, metaParts...))
+	}
 	lines = append(lines, "")
 
 	// 加载与错误状态
@@ -3643,6 +3716,7 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	alternateStyle := lipgloss.NewStyle().Background(lipgloss.Color("236"))
 	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
 	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	yellowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
@@ -3921,6 +3995,16 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 			tokensStyle = contentStyle
 			modelStyle = contentStyle
 			tagStyle = mutedStyle
+			// 奇偶行背景
+			if actualIndex%2 == 1 {
+				timeStyle = timeStyle.Background(lipgloss.Color("236"))
+				statusStyle = statusStyle.Background(lipgloss.Color("236"))
+				spendStyle = spendStyle.Background(lipgloss.Color("236"))
+				latencyStyle = latencyStyle.Background(lipgloss.Color("236"))
+				tokensStyle = tokensStyle.Background(lipgloss.Color("236"))
+				modelStyle = modelStyle.Background(lipgloss.Color("236"))
+				tagStyle = tagStyle.Background(lipgloss.Color("236"))
+			}
 		}
 
 		sb.WriteString(fmt.Sprintf("%s %s %s %s %s %s %s\n",
@@ -4040,8 +4124,12 @@ func (m *Model) HelpText() string {
 		}
 		return "↑↓: 切换 | Enter: 查看详情 | ESC: 返回 | ←/→: 切换 tab | Q: 退出"
 	}
+	// 加载错误状态
+	if m.loadError != "" {
+		return "❌ " + m.loadError + " | r: 重试 | esc: 返回 | ←/→: 切换 tab | q: 退出"
+	}
 	// 列表视图
-	return "↑↓: 切换 | Enter: 详情 | /: 搜索 | s: 排序 | c: 复制 | ?: 帮助 | q: 退出"
+	return "↑↓: 切换 | Enter: 详情 | c: 复制 | g/G: 跳转 | r: 刷新 | esc: 返回 | ←/→: 切换 tab | q: 退出"
 }
 
 // renderHelpPanel 渲染帮助面板
