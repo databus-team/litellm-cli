@@ -1884,6 +1884,9 @@ func (m *Model) renderMessageSummary(msg interface{}, idx int, contentStyle, mut
 	role, _ := msgMap["role"].(string)
 	previewContent := extractMessagePreview(msg)
 
+	// 检测 content 类型
+	contentType := detectMessageContentType(msgMap)
+
 	roleIcon := map[string]string{
 		"system":    "📦",
 		"user":      "👤",
@@ -1893,6 +1896,9 @@ func (m *Model) renderMessageSummary(msg interface{}, idx int, contentStyle, mut
 	if roleIcon == "" {
 		roleIcon = "💬"
 	}
+
+	// 检测是否是"伪装的" tool_result（role=user 但 content 是 tool_result）
+	isHiddenToolResult := role == "user" && contentType == "tool_result"
 
 	prefix := "  "
 	style := mutedStyle
@@ -1929,6 +1935,16 @@ func (m *Model) renderMessageSummary(msg interface{}, idx int, contentStyle, mut
 	summary := roleIcon + " " + rolePart
 	if previewContent != "" {
 		summary += ": " + style.Render(truncate(previewContent, previewLen))
+	}
+
+	// 如果是伪装的 tool_result，在右侧添加标识
+	if isHiddenToolResult {
+		toolResultTag := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("75")).
+			Background(lipgloss.Color("236")).
+			Padding(0, 1).
+			Render("🔧tool_result")
+		summary = truncate(summary, m.width-35) + " " + toolResultTag
 	}
 
 	return []string{fmt.Sprintf("%s[%d] %s", style.Render(prefix), idx, summary)}

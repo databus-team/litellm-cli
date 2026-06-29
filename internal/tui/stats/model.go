@@ -271,9 +271,23 @@ func (m *Model) View() string {
 		sb.WriteString("\n")
 	}
 
+	// 计算可用高度，确保内容不会超出显示区域
+	// 固定行数：header(2) + 时间选择器(1) + 卡片(2) + 分隔线(1, 大屏) + footer(1, showHeader)
+	fixedLines := 2 + 1 + 2 + 1
+	if !isLargeScreen {
+		fixedLines--
+	}
+	if m.showHeader {
+		fixedLines++
+	}
+	maxBarLines := m.height - fixedLines - 2 // 预留一些边距
+	if maxBarLines < 5 {
+		maxBarLines = 5
+	}
+
 	// 底部水平柱状图
 	barWidth := m.width - 4
-	sb.WriteString(m.renderBarContent(barWidth))
+	sb.WriteString(m.renderBarContent(barWidth, maxBarLines))
 	sb.WriteString("\n")
 
 	// 底部帮助信息（独立运行时显示，嵌入 dashboard 时由 dashboard 提供 footer）
@@ -416,7 +430,7 @@ func (m *Model) renderCounterContent(width int) string {
 	return sb.String()
 }
 
-func (m *Model) renderBarContent(width int) string {
+func (m *Model) renderBarContent(width int, maxLines int) string {
 	var sb strings.Builder
 
 	barStyle := lipgloss.NewStyle().
@@ -459,8 +473,15 @@ func (m *Model) renderBarContent(width int) string {
 		barAvailableWidth = 50
 	}
 
+	// 限制实际渲染的行数（确保不超出可用高度）
+	renderCount := len(displayData)
+	if renderCount > maxLines {
+		renderCount = maxLines
+	}
+
 	// 渲染每日的水平进度条
-	for i, r := range displayData {
+	for i := 0; i < renderCount; i++ {
+		r := displayData[i]
 		isSelected := i == m.selectedBarIndex
 
 		// 计算进度条宽度
@@ -494,6 +515,12 @@ func (m *Model) renderBarContent(width int) string {
 			sb.WriteString(spendLabelStyle.Render(fmt.Sprintf("$%.2f", r.Metrics.Spend)))
 		}
 
+		sb.WriteString("\n")
+	}
+
+	// 如果有更多数据未显示，添加提示
+	if len(displayData) > maxLines {
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(fmt.Sprintf("  ... 还有 %d 条数据未显示", len(displayData)-maxLines)))
 		sb.WriteString("\n")
 	}
 
