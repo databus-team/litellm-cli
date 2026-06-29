@@ -1937,14 +1937,12 @@ func (m *Model) renderMessageSummary(msg interface{}, idx int, contentStyle, mut
 		summary += ": " + style.Render(truncate(previewContent, previewLen))
 	}
 
-	// 如果是伪装的 tool_result，在右侧添加标识
+	// 如果是伪装的 tool_result，在右侧添加标识，与 [Tool Call: xxx] 样式保持一致（灰色）
 	if isHiddenToolResult {
 		toolResultTag := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("75")).
-			Background(lipgloss.Color("236")).
-			Padding(0, 1).
-			Render("🔧tool_result")
-		summary = truncate(summary, m.width-35) + " " + toolResultTag
+			Foreground(lipgloss.Color("240")). // 灰色，与 [Tool Call: xxx] 一致
+			Render("[tool_result]")
+		summary = truncate(summary, m.width-30) + " " + toolResultTag
 	}
 
 	return []string{fmt.Sprintf("%s[%d] %s", style.Render(prefix), idx, summary)}

@@ -150,6 +150,14 @@ func (m *teamRankModel) View() string {
 	sb.WriteString(greenStyle.Render(fmt.Sprintf("  团队总用量: $%.2f", m.data.TotalSpend)))
 	sb.WriteString("\n\n")
 
+	// 计算可用高度，确保内容不会超出显示区域
+	// 固定行数：总用量(1) + 空行(1) + 表头(2) + 我的排名(3) + 帮助(1) = 8
+	fixedLines := 8
+	maxRankLines := m.height - fixedLines - 2 // 预留边距
+	if maxRankLines < 5 {
+		maxRankLines = 5
+	}
+
 	// 渲染表格
 	// 计算列宽
 	rankWidth := 5
@@ -181,11 +189,18 @@ func (m *teamRankModel) View() string {
 	sb.WriteString(mutedStyle.Render(" " + strings.Repeat("─", 70)))
 	sb.WriteString("\n")
 
+	// 限制渲染的排名行数
+	renderCount := len(m.data.Ranks)
+	if renderCount > maxRankLines {
+		renderCount = maxRankLines
+	}
+
 	// 渲染排名
 	cyanStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("51")).Bold(true)
 	// 选中行样式（与 logs tab 对齐）
 	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("86"))
-	for i, r := range m.data.Ranks {
+	for i := 0; i < renderCount; i++ {
+		r := m.data.Ranks[i]
 		email := r.Email
 		if runewidth.StringWidth(email) > emailWidth {
 			email = runewidth.Truncate(email, emailWidth-3, "...")
@@ -213,6 +228,12 @@ func (m *teamRankModel) View() string {
 		sb.WriteString(lineStyle.Render(emailPadded))
 		sb.WriteString(" " + lineStyle.Render(spendPadded))
 		sb.WriteString(" " + lineStyle.Render(percentPadded))
+		sb.WriteString("\n")
+	}
+
+	// 如果有更多数据未显示
+	if len(m.data.Ranks) > maxRankLines {
+		sb.WriteString(mutedStyle.Render(fmt.Sprintf("  ... 还有 %d 名用户未显示", len(m.data.Ranks)-maxRankLines)))
 		sb.WriteString("\n")
 	}
 
