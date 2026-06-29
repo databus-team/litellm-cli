@@ -348,7 +348,7 @@ func (m *Model) calculateAggregated() {
 // renderFooter 渲染底部帮助信息
 func (m *Model) renderFooter() string {
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	tip := "1-5: 时间范围 | d/w/m: 粒度 | ↑↓: 选择日期 | q: 退出"
+	tip := "1-5: 时间范围 | d/w/m: 粒度 | ↑↓: 选择日期 | esc: 返回 | ←/→: 切换 tab | q: 退出"
 	return mutedStyle.Render(tip)
 }
 

@@ -59,6 +59,7 @@ type Model struct {
 	detailScroll     int              // 详情视图滚动偏移量
 	detailState      *detailViewState // 详情视图状态（展开/折叠）
 	showHeader       bool             // 是否显示顶部 header（在 dashboard 中隐藏）
+	showFooter       bool             // 是否显示底部 help footer（在 dashboard 中隐藏，由父容器统一渲染）
 }
 
 // NewModel 构造工厂函数
@@ -75,6 +76,7 @@ func NewModel(client LogsClient, interval int, modelFilter string) *Model {
 		viewMode:      "list", // 默认视图模式
 		selectedIndex: 0,
 		showHeader:    true,   // 默认显示 header
+		showFooter:    true,   // 默认显示 footer
 	}
 	return m
 }
@@ -769,16 +771,20 @@ func (m *Model) renderDetailView() string {
 			keys = append(keys, components.HelpKey{Key: "Enter", Desc: "展开/折叠"})
 			keys = append(keys, components.HelpKey{Key: "C", Desc: "复制聚焦块"})
 		}
-		keys = append(keys, components.HelpKey{Key: "ESC", Desc: "返回"})
+		keys = append(keys, components.HelpKey{Key: "ESC", Desc: "返回"}, components.HelpKey{Key: "←/→", Desc: "切换 tab"}, components.HelpKey{Key: "Q", Desc: "退出"})
 		help = components.NewHelp(keys)
 	} else {
 		help = components.NewHelp([]components.HelpKey{
 			{Key: "↑↓", Desc: "切换"},
 			{Key: "Enter", Desc: "查看详情"},
 			{Key: "ESC", Desc: "返回"},
+			{Key: "←/→", Desc: "切换 tab"},
+			{Key: "Q", Desc: "退出"},
 		})
 	}
-	lines = append(lines, help.View(m.width))
+	if m.showFooter {
+		lines = append(lines, help.View(m.width))
+	}
 
 	// 统一滚动处理：任何 tab 在单项展开详情模式下都按物理行处理滚动
 	if m.detailState.itemDetailMode {
@@ -3727,4 +3733,27 @@ func copyToClipboardOSC52(text string) tea.Cmd {
 // ShowHeader 控制是否显示顶部 header
 func (m *Model) ShowHeader(show bool) {
 	m.showHeader = show
+}
+
+// ShowFooter 控制是否显示底部 help footer
+func (m *Model) ShowFooter(show bool) {
+	m.showFooter = show
+}
+
+// HelpText 返回当前视图状态对应的帮助文本（供父容器统一渲染 footer 时使用）
+func (m *Model) HelpText() string {
+	if m.viewMode == "detail" && m.detailState != nil {
+		if m.detailState.itemDetailMode {
+			var keys []string
+			keys = append(keys, "↑↓: 滚动")
+			if len(m.detailState.blocks) > 0 {
+				keys = append(keys, "Tab: 切换块", "Enter: 展开/折叠", "C: 复制")
+			}
+			keys = append(keys, "ESC: 返回", "←/→: 切换 tab", "Q: 退出")
+			return strings.Join(keys, " | ")
+		}
+		return "↑↓: 切换 | Enter: 查看详情 | ESC: 返回 | ←/→: 切换 tab | Q: 退出"
+	}
+	// 列表视图
+	return "↑↓: 切换 | enter: 详情 | c: 复制 | esc: 返回 | ←/→: 切换 tab | q: 退出"
 }

@@ -144,7 +144,6 @@ func (m *modelsTabModel) View() string {
 	var sb strings.Builder
 
 	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
 	// 渲染模型列表
 	for i, model := range m.data.Models {
@@ -155,9 +154,6 @@ func (m *modelsTabModel) View() string {
 		}
 		sb.WriteString("\n")
 	}
-
-	sb.WriteString("\n")
-	sb.WriteString(mutedStyle.Render("  ↑↓: 移动 | q: 退出"))
 
 	return sb.String()
 }
@@ -251,7 +247,6 @@ func (m *teamsTabModel) View() string {
 	var sb strings.Builder
 
 	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	cyanStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("51")).Bold(true)
 
 	// 渲染团队列表
@@ -270,9 +265,6 @@ func (m *teamsTabModel) View() string {
 		}
 		sb.WriteString("\n")
 	}
-
-	sb.WriteString("\n")
-	sb.WriteString(mutedStyle.Render("  ↑↓: 移动 | q: 退出"))
 
 	return sb.String()
 }
@@ -358,7 +350,6 @@ func (m *keyinfoTabModel) View() string {
 	var sb strings.Builder
 
 	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("159")).Bold(true)
@@ -397,9 +388,6 @@ func (m *keyinfoTabModel) View() string {
 		sb.WriteString(greenStyle.Render(strings.Join(m.data.Info.Models, ", ")))
 		sb.WriteString("\n")
 	}
-
-	sb.WriteString("\n")
-	sb.WriteString(mutedStyle.Render("  q: 退出"))
 
 	return sb.String()
 }
@@ -483,7 +471,6 @@ func (m *loginTabModel) View() string {
 	var sb strings.Builder
 
 	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("159")).Bold(true)
@@ -507,9 +494,6 @@ func (m *loginTabModel) View() string {
 	sb.WriteString(keyStyle.Render("  👥 团队数量: "))
 	sb.WriteString(valueStyle.Render(fmt.Sprintf("%d", len(m.data.Teams))))
 	sb.WriteString("\n")
-
-	sb.WriteString("\n")
-	sb.WriteString(mutedStyle.Render("  q: 退出"))
 
 	return sb.String()
 }

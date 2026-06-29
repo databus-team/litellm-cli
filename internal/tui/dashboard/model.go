@@ -25,14 +25,16 @@ var TabNames = map[string]string{
 }
 
 // TabHelpTips Tab 操作提示映射
+// 格式：<特定操作> | <通用操作>
+// 通用操作固定为：esc 返回 | ←/→ 切换 tab | q 退出
 var TabHelpTips = map[string]string{
-	"logs":      "j/k: 上下移动 | enter: 详情 | esc: 返回 | c: 复制 | ←/→: 切换 Tab | q: 退出",
-	"stats":     "1-5: 时间范围 | d/w/m: 粒度 | j/k: 移动 | ←/→: 切换 Tab | q: 退出",
-	"team_rank": "j/k: 上下移动 | enter: 详情 | ←/→: 切换 Tab | q: 退出",
-	"models":    "j/k: 上下移动 | enter: 详情 | ←/→: 切换 Tab | q: 退出",
-	"teams":     "j/k: 上下移动 | enter: 详情 | ←/→: 切换 Tab | q: 退出",
-	"keyinfo":   "←/→: 切换 Tab | q: 退出",
-	"login":     "←/→: 切换 Tab | q: 退出",
+	"logs":      "↑↓: 切换 | enter: 详情 | c: 复制 | esc: 返回 | ←/→: 切换 tab | q: 退出",
+	"stats":     "1-5: 时间范围 | d/w/m: 粒度 | ↑↓: 选择日期 | esc: 返回 | ←/→: 切换 tab | q: 退出",
+	"team_rank": "↑↓: 移动 | enter: 详情 | esc: 返回 | ←/→: 切换 tab | q: 退出",
+	"models":    "↑↓: 移动 | enter: 详情 | esc: 返回 | ←/→: 切换 tab | q: 退出",
+	"teams":     "↑↓: 移动 | enter: 详情 | esc: 返回 | ←/→: 切换 tab | q: 退出",
+	"keyinfo":   "esc: 返回 | ←/→: 切换 tab | q: 退出",
+	"login":     "←/→: 切换 tab | q: 退出",
 }
 
 // Model 是 Dashboard 的主 Model，包含所有 Tab 的子 Model
@@ -79,9 +81,10 @@ func NewModel(client *api.Client, apiKey string) *Model {
 }
 
 func (m *Model) initChildModels() {
-	// Logs - 使用实际的 client，隐藏 header
+	// Logs - 使用实际的 client，隐藏 header 和 footer（由 dashboard 统一渲染）
 	m.Logs = logs.NewModel(clientAdapter{client: m.apiClient}, 5, "")
 	m.Logs.ShowHeader(false)
+	m.Logs.ShowFooter(false)
 	// Stats - 使用团队维度的数据，隐藏 header
 	m.Stats = stats.NewModel(statsClientAdapter{client: m.apiClient}, "", "team")
 	m.Stats.ShowHeader(false)
@@ -339,7 +342,10 @@ func (m *Model) renderHeader() string {
 // renderFooter 渲染底部帮助信息
 func (m *Model) renderFooter() string {
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	// 根据当前活动的 tab 获取对应的操作提示
+	// logs tab 动态获取当前状态的帮助文本（列表/详情/嵌套详情三个状态的按键不同）
+	if m.activeTab == "logs" {
+		return mutedStyle.Render(m.Logs.HelpText())
+	}
 	tip, ok := TabHelpTips[m.activeTab]
 	if !ok {
 		tip = "←/→: 切换 Tab | q: 退出"
