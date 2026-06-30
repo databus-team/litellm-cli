@@ -165,7 +165,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showHelp = !m.showHelp
 			}
 			return m, nil
-		default:
+		// 手动刷新
+		case "r":
+			if m.viewMode == "list" {
+				return m, m.RefreshCmd()
+			}
+			return m, nil
 		// 排序切换
 		case "s":
 			if m.viewMode == "list" {
@@ -561,11 +566,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 立即触发一次刷新
 		return m, m.RefreshCmd()
 
-	// 手动刷新
-	case "r":
-		if m.viewMode == "list" {
-			return m, m.RefreshCmd()
-		}
 	case LogsLoadedMsg:
 		if msg.Error != nil {
 			m.data = "❌ 获取失败"
@@ -3707,7 +3707,7 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	alternateStyle := lipgloss.NewStyle().Background(lipgloss.Color("236"))
+	_
 	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
 	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	yellowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
