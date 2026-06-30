@@ -283,7 +283,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// 计算滚动偏移使最后一项可见
 				maxVisible := m.height - 10
 				if maxVisible > 0 {
-					m.listScrollOffset = max(0, len(m.logData.Data) - maxVisible)
+					m.listScrollOffset = max(0, len(m.logData.Data)-maxVisible)
 				}
 			}
 			return m, nil
@@ -823,12 +823,12 @@ func (m *Model) renderDetailView() string {
 		header = components.NewHeader(fmt.Sprintf("日志 > 日志详情 > %s", tabTitle), "")
 	}
 	lines = append(lines, header.View(m.width))
-	
+
 	// 顶部元信息行
 	if m.selectedEntry != nil {
 		metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 		iconStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
-		
+
 		var metaParts []string
 		metaParts = append(metaParts, iconStyle.Render("📦")+metaStyle.Render(" "+m.selectedEntry.Model))
 		if m.selectedEntry.TotalSpend > 0 {
@@ -839,7 +839,7 @@ func (m *Model) renderDetailView() string {
 		}
 		metaParts = append(metaParts, iconStyle.Render("⏱️")+metaStyle.Render(" "+m.selectedEntry.StartTime))
 		metaParts = append(metaParts, iconStyle.Render("🔖")+metaStyle.Render(" "+m.selectedEntry.ID))
-		
+
 		lines = append(lines, lipgloss.JoinHorizontal(0, metaParts...))
 	}
 	lines = append(lines, "")
@@ -3426,8 +3426,6 @@ func (m *Model) renderListView() string {
 		return m.renderHelpPanel()
 	}
 
-
-
 	availableRows := DetailDefaultRows
 	if m.height > 10 {
 		availableRows = m.height - DetailMinRows
@@ -4175,8 +4173,6 @@ func (m *Model) renderHelpPanel() string {
 	}
 	return panelStyle.Render(sb.String())
 }
-
-
 
 // UI 常量
 const (
