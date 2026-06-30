@@ -186,12 +186,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "esc":
-			// 搜索模式下按 Esc 取消搜索
-			if m.searching {
-				m.searching = false
-				
-				return m, nil
-			}
 			// 帮助面板模式下按 Esc 关闭帮助
 			if m.showHelp {
 				m.showHelp = false
@@ -3432,10 +3426,7 @@ func (m *Model) renderListView() string {
 		return m.renderHelpPanel()
 	}
 
-	// 搜索输入模式
-	if m.searching {
-		return m.renderSearchInput()
-	}
+
 
 	availableRows := DetailDefaultRows
 	if m.height > 10 {
@@ -3493,7 +3484,7 @@ func (m *Model) renderListView() string {
 		content.WriteString(renderLogsTable(filteredData, total, m.newLogIDs, availableRows, m.listScrollOffset, m.width, renderIndex, visibleRows))
 	} else {
 		// 改进的空状态提示
-		if m.searchQuery != "" || m.model != "" {
+		if m.model != "" {
 			content.WriteString(components.NewPlaceholder("无匹配结果").View())
 			content.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("尝试调整搜索条件或清除筛选"))
 		} else {
@@ -3507,7 +3498,7 @@ func (m *Model) renderListView() string {
 	statusInfo = append(statusInfo, fmt.Sprintf("刷新: %ds", m.interval))
 
 	// 显示搜索/排序状态
-	if m.searchQuery != "" {
+	if false { // search removed
 		statusInfo = append(statusInfo, fmt.Sprintf("搜索: %q", m.searchQuery))
 	}
 	if m.model != "" {
