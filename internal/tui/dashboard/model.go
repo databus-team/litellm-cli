@@ -166,6 +166,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 
+	case keyinfoLoadedMsg:
+		child, cmd := m.KeyinfoTab.Update(msg)
+		if keyinfoTab, ok := child.(*keyinfoTabModel); ok {
+			m.KeyinfoTab = keyinfoTab
+		}
+		return m, cmd
 	case teamRankLoadedMsg:
 		child, cmd := m.TeamRank.Update(msg)
 		if teamRankModel, ok := child.(*teamRankModel); ok {
