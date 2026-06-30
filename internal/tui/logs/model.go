@@ -3,6 +3,7 @@ package logs
 import (
 	"encoding/base64"
 	"encoding/json"
+	"time"
 	"fmt"
 	"log"
 	"net/url"
@@ -10,7 +11,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -64,6 +64,8 @@ type Model struct {
 	showHelp         bool             // 是否显示帮助面板
 	pollingPaused    bool             // 轮询是否已暂停
 	loadError        string           // 加载错误信息
+	refreshing       bool             // 是否正在刷新
+	lastRefreshTime  time.Time        // 上次刷新时间
 	sortField        string           // 排序字段: "time", "spend", "tokens"
 	sortAscending    bool             // 排序顺序
 }
@@ -77,6 +79,7 @@ func NewModel(client LogsClient, interval int, modelFilter string) *Model {
 		showHelp:      false,
 		pollingPaused: false,
 		loadError:     "",
+		refreshing:   true,
 		sortField:     "time",
 		sortAscending: false,
 		data:          "加载中...",
@@ -168,6 +171,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 手动刷新
 		case "r":
 			if m.viewMode == "list" {
+				m.refreshing = true
 				return m, m.RefreshCmd()
 			}
 			return m, nil
@@ -567,6 +571,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.RefreshCmd()
 
 	case LogsLoadedMsg:
+		m.refreshing = false
+		m.lastRefreshTime = time.Now()
 		if msg.Error != nil {
 			m.data = "❌ 获取失败"
 			m.loadError = fmt.Sprintf("%v", msg.Error)
@@ -677,6 +683,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) View() string {
 	if m.quitting {
 		return "👋 已退出\n"
+	}
+
+	// 刷新中显示提示
+	if m.refreshing {
+		mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		var timeStr string
+		if !m.lastRefreshTime.IsZero() {
+			timeStr = " | 上次: " + m.lastRefreshTime.Format("15:04:05")
+		}
+		return mutedStyle.Render("🔄 刷新中..." + timeStr)
 	}
 
 	// 详情视图

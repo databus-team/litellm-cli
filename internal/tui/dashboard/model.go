@@ -53,12 +53,12 @@ type Model struct {
 	// 是否正在退出
 	quitting bool
 
-	// 是否显示退出确认
-	showQuitConfirm bool
+
 }
 
 // DashboardQuitMsg 是 Dashboard 专用退出消息，用于在子模型之前捕获退出键
 type DashboardQuitMsg struct{}
+
 
 // NewModel 创建一个新的 Dashboard Model
 func NewModel(client *api.Client, apiKey string) *Model {
@@ -106,28 +106,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 
+
 	case tea.KeyMsg:
 		// 首先处理 Tab 切换键 (←/→)
 		if m.handleTabKey(msg) {
 			return m, nil
 		}
 
-		// 处理退出确认
-		if m.showQuitConfirm {
-			if msg.String() == "y" {
-				m.quitting = true
-				return m, tea.Quit
-			} else if msg.String() == "n" || msg.String() == "esc" || msg.String() == "enter" {
-				m.showQuitConfirm = false
-				return m, nil
-			}
-			return m, nil
-		}
-
 		// 处理退出键 - 在转发给子模型之前捕获
 		if msg.String() == "q" {
-			m.showQuitConfirm = true
-			return m, nil
+			m.quitting = true
+			return m, tea.Quit
 		}
 
 		// 转发给当前活动子模型
@@ -195,7 +184,7 @@ func (m *Model) View() string {
 	header := m.renderHeader()
 
 	// 渲染退出确认
-	if m.showQuitConfirm {
+	if false /* was showQuitConfirm */ {
 		confirmStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("220")). // 黄色
 			Bold(true)
