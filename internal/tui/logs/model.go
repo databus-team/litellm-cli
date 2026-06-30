@@ -1538,7 +1538,7 @@ func (m *Model) renderMainView(proxyReq, respData map[string]interface{}, cardSt
 		}
 		if singleChoice != nil {
 			// 宽屏时 response 占右半列，减去 header/border/usage/spend 等固定行后的可用行数
-			availForPreview := (m.height - 8) - 4
+			availForPreview := (m.height-8)/2-4
 			if availForPreview < 4 {
 				availForPreview = 4
 			}
