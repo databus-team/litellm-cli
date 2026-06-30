@@ -3702,7 +3702,6 @@ func renderLogsTable(data []api.SpendLogEntry, total int, newLogIDs map[string]b
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	_
 	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
 	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	yellowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
