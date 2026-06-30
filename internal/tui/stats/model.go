@@ -268,15 +268,6 @@ func (m *Model) View() string {
 	if counterWidth > 100 {
 		counterWidth = 100
 	}
-	// counter 渲染现在在动态高度计算后进行（见下文）
-	// sb.WriteString(m.renderCounterContent(counterWidth))
-	// sb.WriteString("\n")
-
-	// 分隔线
-	if isLargeScreen {
-		sb.WriteString(strings.Repeat("─", m.width))
-		sb.WriteString("\n")
-	}
 
 	// 动态计算可用高度，确保内容不会超出显示区域
 	availableHeight := m.height
@@ -287,10 +278,10 @@ func (m *Model) View() string {
 		availableHeight = MinWindowHeight
 	}
 
-	// 时间选择器固定 1 行，分隔线 1 行
-	fixedContentLines := 1 + 1 // 时间选择器(1) + 分隔线(1)
-	if !isLargeScreen {
-		fixedContentLines-- // 窄屏无分隔线
+	// 时间选择器固定 1 行，分隔线 1 行（如果是大屏）
+	fixedContentLines := 1
+	if isLargeScreen {
+		fixedContentLines++ // 大屏有分隔线
 	}
 
 	// 计算 counter 最大行数（基于列数和指标数）
@@ -319,8 +310,17 @@ func (m *Model) View() string {
 	sb.WriteString(counterOutput)
 	sb.WriteString("\n")
 
+	// 分隔线（在 counter 之后）
+	if isLargeScreen {
+		sb.WriteString(strings.Repeat("─", m.width))
+		sb.WriteString("\n")
+	}
+
 	// 计算 bar 可用高度
-	barAvailableHeight := availableHeight - fixedContentLines - counterActualRows
+	barAvailableHeight := availableHeight - counterActualRows
+	if isLargeScreen {
+		barAvailableHeight-- // 减去分隔线
+	}
 	if barAvailableHeight < MinBarHeight {
 		barAvailableHeight = MinBarHeight
 	}
