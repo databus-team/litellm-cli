@@ -266,10 +266,28 @@ type KeyDetail struct {
 }
 
 // GetKeyInfo 获取 Key 详情
+// 使用 x-litellm-api-key 头进行鉴权
 func (c *Client) GetKeyInfo(apiKey string) (*KeyInfoResponse, error) {
 	var result KeyInfoResponse
-	err := c.Get("/key/info?api_key="+apiKey, &result)
+	err := c.getWithKeyHeader("/key/info?api_key="+apiKey, apiKey, &result)
 	return &result, err
+}
+
+// getWithKeyHeader 使用 x-litellm-api-key 头发送请求
+func (c *Client) getWithKeyHeader(path, apiKey string, result interface{}) error {
+	req := c.resty.R()
+	req.SetHeader("x-litellm-api-key", apiKey)
+
+	resp, err := req.Get(path)
+	if err != nil {
+		return fmt.Errorf("请求失败: %w", err)
+	}
+
+	if resp.StatusCode() != http.StatusOK {
+		return c.parseError(resp.Body())
+	}
+
+	return json.Unmarshal(resp.Body(), result)
 }
 
 // UserInfoResponse represents /user/info response
