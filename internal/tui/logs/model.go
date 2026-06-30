@@ -3495,10 +3495,7 @@ func (m *Model) renderListView() string {
 	var statusInfo []string
 	statusInfo = append(statusInfo, fmt.Sprintf("刷新: %ds", m.interval))
 
-	// 显示搜索/排序状态
-	if false { // search removed
-		statusInfo = append(statusInfo, fmt.Sprintf("搜索: %q", m.searchQuery))
-	}
+	// 显示排序状态
 	if m.model != "" {
 		statusInfo = append(statusInfo, fmt.Sprintf("模型: %s", m.model))
 	}
