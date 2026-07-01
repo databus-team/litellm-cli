@@ -27,7 +27,8 @@ const (
 	// 布局常量
 	MinWindowHeight    = 10 // 最小窗口高度
 	MinBarHeight       = 3  // 最小柱状图高度
-	CounterHeaderLines = 2  // header 占用行数
+	MaxBarHeight       = 15 // 最大柱状图高度（防止数据过多挤出 header/counter）
+	CounterHeaderLines = 2 // header 占用行数
 	CounterFooterLines = 1  // footer 占用行数
 )
 
@@ -325,6 +326,10 @@ func (m *Model) View() string {
 	}
 	if barAvailableHeight < MinBarHeight {
 		barAvailableHeight = MinBarHeight
+	}
+	// 限制最大高度，防止过多数据挤出 header/counter
+	if barAvailableHeight > MaxBarHeight {
+		barAvailableHeight = MaxBarHeight
 	}
 
 	// 底部水平柱状图
