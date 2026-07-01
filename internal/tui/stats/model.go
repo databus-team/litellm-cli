@@ -332,17 +332,31 @@ func (m *Model) View() string {
 	if barAvailableHeight < MinBarHeight {
 		barAvailableHeight = MinBarHeight
 	}
-	// 限制最大高度，防止过多数据挤出 header/counter
-	if barAvailableHeight > MaxBarHeight {
-		barAvailableHeight = MaxBarHeight
+
+	// 自适应高度：使用实际数据量和可用高度的较小值
+	displayData := m.adjustDataForGranularity()
+	dataCount := len(displayData)
+	// 基础显示行数：最多显示数据量，但不超过可用高度
+	barMaxHeight := dataCount
+	if barMaxHeight > barAvailableHeight {
+		barMaxHeight = barAvailableHeight
+	}
+	// 留出行给 detail panel (1行) 和 hint (1行)
+	showHint := dataCount > barMaxHeight || m.scrollOffset > 0
+	barMaxHeight -= 1 // detail
+	if showHint {
+		barMaxHeight -= 1 // hint
+	}
+	if barMaxHeight < MinBarHeight {
+		barMaxHeight = MinBarHeight
 	}
 
 	// 保存 bar 高度供滚动计算使用
-	m.barHeight = barAvailableHeight
+	m.barHeight = barMaxHeight
 
 	// 底部水平柱状图
 	barWidth := m.width - 4
-	sb.WriteString(m.renderBarContent(barWidth, barAvailableHeight))
+	sb.WriteString(m.renderBarContent(barWidth, barMaxHeight))
 	sb.WriteString("\n")
 
 	// 底部帮助信息（独立运行时显示，嵌入 dashboard 时由 dashboard 提供 footer）
