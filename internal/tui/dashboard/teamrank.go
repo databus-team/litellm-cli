@@ -38,8 +38,10 @@ type TeamMember struct {
 
 // TeamKey 团队 Key
 type TeamKey struct {
-	UserID string
-	Spend  float64
+	UserID   string
+	Spend    float64
+	KeyName  string
+	KeyAlias string
 }
 
 // TeamRankResponse 团队排行榜响应
@@ -53,26 +55,30 @@ type TeamRankResponse struct {
 
 // UserRank 用户排名
 type UserRank struct {
-	UserID  string
-	Email   string
-	Spend   float64
-	Percent float64
-	Rank    int
-	IsMe    bool
+	UserID   string
+	Email    string
+	Spend    float64
+	Percent  float64
+	Rank     int
+	IsMe     bool
+	KeyCount int
+	Keys     []TeamKey
 }
 
 // teamRankModel 是 Team Rank 的 TUI Model
 type teamRankModel struct {
-	client        TeamRankClient
-	apiClient     *api.Client // 直接使用 API client 调用 /team 接口
-	teamID        string
-	data          *TeamRankResponse
-	selectedIndex int
-	width         int
-	height        int
-	loading       bool
-	err           string
-	quitting      bool
+	client          TeamRankClient
+	apiClient       *api.Client // 直接使用 API client 调用 /team 接口
+	teamID          string
+	data            *TeamRankResponse
+	selectedIndex   int
+	detailView      bool       // 是否在详情视图
+	detailSelected  int        // 详情视图选中索引
+	width           int
+	height          int
+	loading         bool
+	err             string
+	quitting        bool
 }
 
 // newTeamRankModel 创建新的 Team Rank Model
@@ -104,13 +110,43 @@ func (m *teamRankModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+		case "enter":
+			// 进入详情视图
+			if !m.detailView && m.data != nil && len(m.data.Ranks) > 0 && m.selectedIndex < len(m.data.Ranks) {
+				r := m.data.Ranks[m.selectedIndex]
+				if len(r.Keys) >= 1 {
+					m.detailView = true
+					m.detailSelected = 0
+				}
+			}
+		case "esc":
+			// 退出详情视图
+			if m.detailView {
+				m.detailView = false
+				m.detailSelected = 0
+			}
 		case "down", "j":
-			if m.data != nil && len(m.data.Ranks) > 0 && m.selectedIndex < len(m.data.Ranks)-1 {
-				m.selectedIndex++
+			if m.detailView {
+				// 详情视图导航
+				r := m.data.Ranks[m.selectedIndex]
+				if len(r.Keys) > 0 && m.detailSelected < len(r.Keys)-1 {
+					m.detailSelected++
+				}
+			} else {
+				// 排行榜导航
+				if m.data != nil && len(m.data.Ranks) > 0 && m.selectedIndex < len(m.data.Ranks)-1 {
+					m.selectedIndex++
+				}
 			}
 		case "up", "k":
-			if m.selectedIndex > 0 {
-				m.selectedIndex--
+			if m.detailView {
+				if m.detailSelected > 0 {
+					m.detailSelected--
+				}
+			} else {
+				if m.selectedIndex > 0 {
+					m.selectedIndex--
+				}
 			}
 		}
 	case tea.WindowSizeMsg:
@@ -200,9 +236,10 @@ func (m *teamRankModel) View() string {
 	// 渲染表格
 	// 计算列宽
 	rankWidth := 5
-	emailWidth := 30
+	emailWidth := 26
 	spendWidth := 12
 	percentWidth := 8
+	keysWidth := 6
 
 	padRight := func(s string, width int) string {
 		w := runewidth.StringWidth(s)
@@ -220,11 +257,12 @@ func (m *teamRankModel) View() string {
 	}
 
 	// 表头
-	sb.WriteString(fmt.Sprintf("  %s %s %s %s\n",
+	sb.WriteString(fmt.Sprintf("  %s %s %s %s %s\n",
 		padRight("排名", rankWidth),
 		padRight("用户", emailWidth),
 		padLeft("用量", spendWidth),
-		padLeft("占比", percentWidth)))
+		padLeft("占比", percentWidth),
+		padRight("Keys", keysWidth)))
 	sb.WriteString(mutedStyle.Render(" " + strings.Repeat("─", 70)))
 	sb.WriteString("\n")
 
@@ -232,6 +270,7 @@ func (m *teamRankModel) View() string {
 	cyanStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("51")).Bold(true)
 	// 选中行样式（与 logs tab 对齐）
 	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("86"))
+	mutedCyanStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("73"))
 	for i := viewStart; i < viewEnd && i < totalRanks; i++ {
 		r := m.data.Ranks[i]
 		email := r.Email
@@ -244,10 +283,17 @@ func (m *teamRankModel) View() string {
 			rankStr = "→" + fmt.Sprintf("%d", r.Rank)
 		}
 
+		// Key 数量显示
+		keyCountStr := fmt.Sprintf("%d", r.KeyCount)
+		if r.KeyCount > 1 {
+			keyCountStr = mutedCyanStyle.Render(keyCountStr)
+		}
+
 		rankPadded := padRight(rankStr, rankWidth)
 		emailPadded := padRight(email, emailWidth)
 		spendPadded := padLeft(fmt.Sprintf("$%.2f", r.Spend), spendWidth)
 		percentPadded := padLeft(fmt.Sprintf("%.1f%%", r.Percent), percentWidth)
+		keysPadded := padRight(keyCountStr, keysWidth)
 
 		// 选中行样式（使用绝对索引 i 比较）
 		lineStyle := greenStyle
@@ -261,6 +307,7 @@ func (m *teamRankModel) View() string {
 		sb.WriteString(lineStyle.Render(emailPadded))
 		sb.WriteString(" " + lineStyle.Render(spendPadded))
 		sb.WriteString(" " + lineStyle.Render(percentPadded))
+		sb.WriteString(" " + lineStyle.Render(keysPadded))
 		sb.WriteString("\n")
 	}
 
@@ -284,6 +331,100 @@ func (m *teamRankModel) View() string {
 		sb.WriteString(cyanStyle.Render(fmt.Sprintf("    你的用量: $%.2f (占比 %.1f%%)", m.data.CurrentRank.Spend, m.data.CurrentRank.Percent)))
 		sb.WriteString("\n")
 	}
+
+	// 详情视图
+	if m.detailView {
+		return m.renderDetailView()
+	}
+
+	return sb.String()
+}
+
+// renderDetailView 渲染 Key 明细视图
+func (m *teamRankModel) renderDetailView() string {
+	r := m.data.Ranks[m.selectedIndex]
+	keys := r.Keys
+
+	var sb strings.Builder
+
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("86"))
+	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("86"))
+
+	padRight := func(s string, width int) string {
+		w := runewidth.StringWidth(s)
+		if w >= width {
+			return s
+		}
+		return s + strings.Repeat(" ", width-w)
+	}
+	padLeft := func(s string, width int) string {
+		w := runewidth.StringWidth(s)
+		if w >= width {
+			return s
+		}
+		return strings.Repeat(" ", width-w) + s
+	}
+
+	// 标题
+	sb.WriteString(headerStyle.Render(fmt.Sprintf("  📋 %s 的 API Keys (%d个)", r.Email, len(keys))))
+	sb.WriteString("\n\n")
+
+	// 表头
+	sb.WriteString("  # ")
+	sb.WriteString(mutedStyle.Render(padRight("Key Alias", 35)))
+	sb.WriteString(mutedStyle.Render(padLeft("用量", 12)))
+	sb.WriteString(mutedStyle.Render(padLeft("占比", 8)))
+	sb.WriteString("\n")
+	sb.WriteString(mutedStyle.Render("  " + strings.Repeat("─", 60)))
+	sb.WriteString("\n")
+
+	// 计算每个 key 的占比
+	totalSpend := r.Spend
+
+	// 确保 detailSelected 不越界
+	if m.detailSelected >= len(keys) {
+		m.detailSelected = len(keys) - 1
+	}
+	if m.detailSelected < 0 {
+		m.detailSelected = 0
+	}
+
+	for i, k := range keys {
+		percent := 0.0
+		if totalSpend > 0 {
+			percent = (k.Spend / totalSpend) * 100
+		}
+
+		keyAlias := k.KeyAlias
+		if keyAlias == "" {
+			keyAlias = k.KeyName[:12] + "..."
+		}
+		if runewidth.StringWidth(keyAlias) > 32 {
+			keyAlias = runewidth.Truncate(keyAlias, 29, "...")
+		}
+
+		lineStyle := greenStyle
+		if i == m.detailSelected {
+			lineStyle = selectedStyle
+		}
+
+		indexStr := fmt.Sprintf("%d", i+1)
+		sb.WriteString(lineStyle.Render("  " + padRight(indexStr, 2)))
+		sb.WriteString(lineStyle.Render(padRight(keyAlias, 35)))
+		sb.WriteString(" " + lineStyle.Render(padLeft(fmt.Sprintf("$%.2f", k.Spend), 12)))
+		sb.WriteString(" " + lineStyle.Render(padLeft(fmt.Sprintf("%.1f%%", percent), 8)))
+		sb.WriteString("\n")
+	}
+
+	// 统计信息
+	sb.WriteString("\n")
+	sb.WriteString(greenStyle.Render(fmt.Sprintf("  总用量: $%.2f", totalSpend)))
+	sb.WriteString("\n")
+	sb.WriteString(mutedStyle.Render("  ↑↓: 移动 | esc: 返回 | enter: 选中"))
 
 	return sb.String()
 }
@@ -310,11 +451,13 @@ func (m *teamRankModel) refreshCmd() tea.Cmd {
 			userEmailMap[member.UserID] = member.Email
 		}
 
-		// 按 user_id 聚合用量
+		// 按 user_id 聚合用量，同时收集每个用户的 keys
 		userSpend := make(map[string]float64)
+		userKeys := make(map[string][]TeamKey)
 		for _, k := range team.Keys {
 			if k.UserID != "" {
 				userSpend[k.UserID] += k.Spend
+				userKeys[k.UserID] = append(userKeys[k.UserID], k)
 			}
 		}
 
@@ -335,12 +478,15 @@ func (m *teamRankModel) refreshCmd() tea.Cmd {
 			if totalSpend > 0 {
 				percent = (spend / totalSpend) * 100
 			}
+			keys := userKeys[uid]
 			ranks = append(ranks, UserRank{
-				UserID:  uid,
-				Email:   email,
-				Spend:   spend,
-				Percent: percent,
-				IsMe:    uid == userInfo.UserID,
+				UserID:   uid,
+				Email:    email,
+				Spend:    spend,
+				Percent:  percent,
+				IsMe:     uid == userInfo.UserID,
+				KeyCount: len(keys),
+				Keys:     keys,
 			})
 		}
 

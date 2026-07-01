@@ -33,8 +33,10 @@ func (a *teamRankClientAdapter) GetUserInfo() (*UserInfo, error) {
 		keys := make([]TeamKey, len(t.Keys))
 		for j, k := range t.Keys {
 			keys[j] = TeamKey{
-				UserID: k.UserID,
-				Spend:  k.Spend,
+				UserID:   k.UserID,
+				Spend:    k.Spend,
+				KeyName:  k.KeyName,
+				KeyAlias: k.KeyAlias,
 			}
 		}
 		teams[i] = UserTeam{
