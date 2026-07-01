@@ -87,7 +87,7 @@ func TestGetUserDailyActivity(t *testing.T) {
 	}
 
 	c := New(cfg)
-	_, err := c.GetUserDailyActivity("2026-06-01", "2026-06-30")
+	_, err := c.GetUserDailyActivity("2026-06-01", "2026-06-30", 0, 1)
 
 	if err != nil {
 		t.Fatalf("GetUserDailyActivity() error = %v", err)
