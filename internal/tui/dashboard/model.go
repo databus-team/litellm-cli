@@ -83,7 +83,7 @@ func (m *Model) initChildModels() {
 	// Stats - 使用用户维度的数据（team 数据从 2026-05-20 开始，user 数据从 2026-01-01 开始），隐藏 header
 	now := time.Now()
 	endDate := now.Format("2006-01-02")
-	startDate := time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+	startDate := now.AddDate(0, 0, -7).Format("2006-01-02") // 默认最近一周
 	m.Stats = stats.NewModel(statsClientAdapter{client: m.apiClient}, startDate, endDate)
 	m.Stats.By = "user"
 	m.Stats.ShowHeader(false)
