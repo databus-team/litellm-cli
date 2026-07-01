@@ -49,6 +49,7 @@ type Model struct {
 	aggregated       aggregatedMetrics
 	selectedBarIndex int
 	scrollOffset     int   // 虚拟滚动偏移量
+	barHeight        int   // bar 区域可用高度（用于滚动计算）
 	width            int
 	height           int
 	quitting         bool
@@ -212,7 +213,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.data) > 0 {
 				if m.selectedBarIndex < len(m.data)-1 {
 					m.selectedBarIndex++
-					m.updateScrollOffset(m.height)
+					m.updateScrollOffset(m.barHeight)
 				}
 			}
 			return m, nil
@@ -220,7 +221,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.data) > 0 {
 				if m.selectedBarIndex > 0 {
 					m.selectedBarIndex--
-					m.updateScrollOffset(m.height)
+					m.updateScrollOffset(m.barHeight)
 				}
 			}
 			return m, nil
@@ -335,6 +336,9 @@ func (m *Model) View() string {
 	if barAvailableHeight > MaxBarHeight {
 		barAvailableHeight = MaxBarHeight
 	}
+
+	// 保存 bar 高度供滚动计算使用
+	m.barHeight = barAvailableHeight
 
 	// 底部水平柱状图
 	barWidth := m.width - 4
