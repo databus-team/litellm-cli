@@ -134,22 +134,27 @@ func (m *usageRankModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "1":
 			m.timeRange = TimeRangeWeek
+			m.updateDateRange()
 			m.loading = true
 			return m, m.refreshCmd()
 		case "2":
 			m.timeRange = TimeRangeMonth
+			m.updateDateRange()
 			m.loading = true
 			return m, m.refreshCmd()
 		case "3":
 			m.timeRange = TimeRange3Months
+			m.updateDateRange()
 			m.loading = true
 			return m, m.refreshCmd()
 		case "4":
 			m.timeRange = TimeRangeHalfYear
+			m.updateDateRange()
 			m.loading = true
 			return m, m.refreshCmd()
 		case "5":
 			m.timeRange = TimeRangeYear
+			m.updateDateRange()
 			m.loading = true
 			return m, m.refreshCmd()
 		case "t":
@@ -225,9 +230,6 @@ func (m *usageRankModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // cycleTimeRange 循环切换时间范围（兼容旧快捷键）
 func (m *usageRankModel) cycleTimeRange() {
-	now := time.Now()
-	today := now.Format("2006-01-02")
-
 	switch m.timeRange {
 	case TimeRangeWeek:
 		m.timeRange = TimeRangeMonth
@@ -244,12 +246,13 @@ func (m *usageRankModel) cycleTimeRange() {
 	}
 
 	// 更新日期范围
-	m.updateDateRange(today)
+	m.updateDateRange()
 }
 
-// updateDateRange 根据预设更新日期范围
-func (m *usageRankModel) updateDateRange(today string) {
-	now, _ := time.Parse("2006-01-02", today)
+// updateDateRange 根据预设更新日期范围（自动获取今天日期）
+func (m *usageRankModel) updateDateRange() {
+	now := time.Now()
+	today := now.Format("2006-01-02")
 	switch m.timeRange {
 	case TimeRangeWeek:
 		m.startDate = now.AddDate(0, 0, -7).Format("2006-01-02")
@@ -516,6 +519,7 @@ func (m *usageRankModel) renderTimeRangeSelector() string {
 
 	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	dateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
 	// 构建时间范围按钮
 	var buttons []string
@@ -535,7 +539,11 @@ func (m *usageRankModel) renderTimeRangeSelector() string {
 		buttons = append(buttons, btn)
 	}
 
-	return greenStyle.Render("  时间范围: ") + mutedStyle.Render(strings.Join(buttons, " "))
+	// 显示实际日期范围
+	dateRange := fmt.Sprintf("%s ~ %s", m.startDate, m.endDate)
+
+	return greenStyle.Render("  时间范围: ") + mutedStyle.Render(strings.Join(buttons, " ")) + "\n" +
+		dateStyle.Render("  " + dateRange)
 }
 
 // formatTokens 格式化 Token 数量
