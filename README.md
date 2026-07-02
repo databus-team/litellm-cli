@@ -2,6 +2,10 @@
 
 LiteLLM CLI 是一个用于查看 LiteLLM 用量、日志、模型、Key 信息和团队信息的命令行工具。项目使用 Go、Cobra 和 Bubble Tea 构建，支持普通命令输出和日志 TUI 视图。
 
+## 更新日志
+
+见 [CHANGELOG.md](./CHANGELOG.md)
+
 ## 功能
 
 - 查看用户或团队维度的用量统计
