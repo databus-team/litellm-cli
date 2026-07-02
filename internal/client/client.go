@@ -22,7 +22,7 @@ func (c *Client) GetUserDailyActivity(startDate, endDate string, pageSize int, p
 }
 
 func (c *Client) GetTeamDailyActivity(startDate, endDate string) (*api.TeamDailyActivityResponse, error) {
-	return c.api.GetTeamDailyActivity(startDate, endDate)
+	return c.api.GetAllTeamDailyActivity(startDate, endDate)
 }
 
 func (c *Client) GetSpendLogs(startDate, endDate string) (*api.SpendLogsResponse, error) {

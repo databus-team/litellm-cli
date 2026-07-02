@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/go-resty/resty/v2"
 	"litellm-cli/internal/config"
@@ -167,7 +168,21 @@ func (c *Client) GetUserDailyActivity(startDate, endDate string, pageSize int, p
 
 // TeamDailyActivityResponse represents /team/daily/activity response
 type TeamDailyActivityResponse struct {
-	Results []TeamDailyActivity `json:"results"`
+	Results  []TeamDailyActivity `json:"results"`
+	Metadata PaginationMetadata   `json:"metadata"`
+}
+
+type PaginationMetadata struct {
+	Page                  int     `json:"page"`
+	TotalPages            int     `json:"total_pages"`
+	HasMore               bool    `json:"has_more"`
+	TotalSpend            float64 `json:"total_spend"`
+	TotalPromptTokens     int64   `json:"total_prompt_tokens"`
+	TotalCompletionTokens int64   `json:"total_completion_tokens"`
+	TotalTokens           int64   `json:"total_tokens"`
+	TotalAPIRequests      int64   `json:"total_api_requests"`
+	TotalSuccessfulRequests int64 `json:"total_successful_requests"`
+	TotalFailedRequests   int64   `json:"total_failed_requests"`
 }
 
 type TeamDailyActivity struct {
@@ -176,11 +191,62 @@ type TeamDailyActivity struct {
 	Breakdown Breakdown       `json:"breakdown"`
 }
 
-// GetTeamDailyActivity 获取团队每日活动
+// GetTeamDailyActivity 获取团队每日活动（内部已处理分页）
 func (c *Client) GetTeamDailyActivity(startDate, endDate string) (*TeamDailyActivityResponse, error) {
+	return c.GetAllTeamDailyActivity(startDate, endDate)
+}
+
+// GetTeamDailyActivityWithPage 获取团队每日活动（单页）
+func (c *Client) GetTeamDailyActivityWithPage(startDate, endDate string, page int, pageSize int) (*TeamDailyActivityResponse, error) {
+	query := fmt.Sprintf("/team/daily/activity?start_date=%s&end_date=%s&api_key=&page=%d&page_size=%d", startDate, endDate, page, pageSize)
 	var result TeamDailyActivityResponse
-	err := c.Get(fmt.Sprintf("/team/daily/activity?start_date=%s&end_date=%s", startDate, endDate), &result)
+	err := c.getWithKeyHeader(query, "", &result)
 	return &result, err
+}
+
+// GetAllTeamDailyActivity 获取所有页的团队每日活动数据
+func (c *Client) GetAllTeamDailyActivity(startDate, endDate string) (*TeamDailyActivityResponse, error) {
+	// 先获取第一页
+	firstResp, err := c.GetTeamDailyActivityWithPage(startDate, endDate, 1, 100)
+	if err != nil {
+		return firstResp, err
+	}
+	if firstResp == nil || len(firstResp.Results) == 0 {
+		return firstResp, err
+	}
+
+	// 如果没有更多页面，直接返回
+	if !firstResp.Metadata.HasMore {
+		return firstResp, err
+	}
+
+	// 并发获取剩余页面
+	totalPages := firstResp.Metadata.TotalPages
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	results := make([][]TeamDailyActivity, totalPages)
+	results[0] = firstResp.Results
+
+	for page := 2; page <= totalPages; page++ {
+		wg.Add(1)
+		go func(p int) {
+			defer wg.Done()
+			resp, err := c.GetTeamDailyActivityWithPage(startDate, endDate, p, 100)
+			mu.Lock()
+			defer mu.Unlock()
+			if err == nil && resp != nil {
+				results[p-1] = resp.Results
+			}
+		}(page)
+	}
+	wg.Wait()
+
+	// 合并所有页的结果
+	for page := 1; page < totalPages; page++ {
+		firstResp.Results = append(firstResp.Results, results[page]...)
+	}
+
+	return firstResp, nil
 }
 
 // SpendLogsResponse represents /spend/logs response - 使用 map 处理动态 key

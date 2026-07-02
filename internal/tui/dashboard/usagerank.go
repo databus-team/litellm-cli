@@ -613,8 +613,10 @@ func (m *usageRankModel) refreshCmd() tea.Cmd {
 			for key, keyData := range day.Breakdown.APIKeys {
 				// 获取 key_alias
 				keyAlias := key
-				if keyData.Metadata != nil && keyData.Metadata.KeyAlias != "" {
-					keyAlias = keyData.Metadata.KeyAlias
+				if keyData.Metadata != nil {
+					if alias, ok := keyData.Metadata["key_alias"]; ok {
+						keyAlias = alias
+					}
 				}
 
 				userID, ok := m.keyAliasToUser[keyAlias]

@@ -65,6 +65,7 @@ func NewTeamRankClientAdapter(client *api.Client) TeamRankClient {
 
 // GetTeamDailyActivity 获取团队每日活动
 func (a *teamRankClientAdapter) GetTeamDailyActivity(startDate, endDate string) (*api.TeamDailyActivityResponse, error) {
+	// client.GetTeamDailyActivity now internally handles pagination
 	return a.client.GetTeamDailyActivity(startDate, endDate)
 }
 
