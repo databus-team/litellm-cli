@@ -247,6 +247,12 @@ func (m *teamRankModel) View() string {
 		return "暂无数据\n"
 	}
 
+	var sb strings.Builder
+
+	// 渲染 sub-tab header（始终显示）
+	sb.WriteString(m.renderSubTabHeader())
+	sb.WriteString("\n")
+
 	// 确保 selectedIndex 不会越界
 	if m.selectedIndex >= len(m.data.Ranks) {
 		m.selectedIndex = len(m.data.Ranks) - 1
@@ -254,8 +260,6 @@ func (m *teamRankModel) View() string {
 	if m.selectedIndex < 0 {
 		m.selectedIndex = 0
 	}
-
-	var sb strings.Builder
 
 	// 总用量
 	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
