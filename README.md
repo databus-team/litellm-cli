@@ -34,19 +34,20 @@ go run . models
 
 ## 配置
 
-最简单的方式是设置 API Key：
+### 环境变量
 
 ```bash
-export LITELLM_API_KEY="your-api-key"
-```
+# 基础配置（必需）
+export LITELLM_API_KEY="your-api-key"      # 用于访问个人 Key 相关数据
+export LITELLM_BASE_URL="https://your-api.com"
 
-可选配置项：
-
-```bash
-export LITELLM_BASE_URL="https://litellm.com"
-export LITELLM_USERNAME="your-username"
+# 团队数据访问（用于查看团队成员、Key 列表等）
+export LITELLM_USERNAME="your-username"     # 用于获取团队维度的用量数据
 export LITELLM_PASSWORD="your-password"
 ```
+
+- `LITELLM_API_KEY`：个人 API Key，用于 Key 排行、用量统计等
+- `LITELLM_USERNAME` + `LITELLM_PASSWORD`：用于获取团队维度数据（团队成员、Key 列表等），登录后会缓存 token 24 小时
 
 命令行参数会覆盖默认配置：
 
